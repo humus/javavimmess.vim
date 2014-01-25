@@ -47,7 +47,7 @@ endfunction "}}}
 
 fun! s:parse_mvn_output() "{{{
   let mvn_output = system('mvn dependency:build-classpath')
-  let lines = split(result, '\n')
+  let lines = split(mvn_output, '\n')
   let line = filter(lines, 'v:val =~ ''\vjar[;:]''')[0]
   let paths = split(line, '\v(^C|;C)@<![:;]')
   return paths
@@ -55,17 +55,17 @@ endfunction "}}}
 
 fun! s:copy_files_to_cache(files) "{{{
   if has('win32')
-    call s:exec_copies_win32(files)
+    call s:exec_copies_win32(a:files)
   else
     echom 'no win32'
   endif
 endfunction "}}}
 
-fun! s:exec_copies_win32(total, files) "{{{
+fun! s:exec_copies_win32(files) "{{{
   let len_of_files = len(a:files)
   let files_to_copy = []
   for i in range(len_of_files)
-    call add(files_to_copy, files[i])
+    call add(files_to_copy, a:files[i])
     if len(files_to_copy) % 25 == 0
       call s:exec_copy_command_win32(files_to_copy)
       let files_to_copy = []
@@ -73,10 +73,16 @@ fun! s:exec_copies_win32(total, files) "{{{
     endif
   endfor
   call  s:exec_copy_command_win32(files_to_copy)
+  redraw | echo 'DONE'
 endfunction "}}}
 
 fun! s:exec_copy_command_win32(files) "{{{
-  
+  let cmdstr = ''
+  for path in a:files
+    let cmdstr .= 'copy ' . fnameescape(path) . ' .cache && '
+  endfor
+  let cmdstr = substitute(cmdstr, '\v&&\s*$', '', '') . ' .cache'
+  call system(cmdstr)
 endfunction "}}}
 
 command! CacheCurrProjMaven call CacheThisMavenProj()
