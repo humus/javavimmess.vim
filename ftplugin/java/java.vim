@@ -11,7 +11,6 @@ fun! CacheThisMavenProj() "{{{
   set cmdheight=3
   let is_regenerated = s:prompt_regenerate_cache(adir)
   exe "set cmdheight=" . cmd_height
-
   if is_regenerated
     call s:populate_cache(adir)
   endif
@@ -221,11 +220,10 @@ fun! FindDeclaredType() abort "{{{
         \ , '\v^%(\t|    )}'
         \ , 'bn')
   let search_expr = '\v^\s+\S+.*(\=)@<!\s<' . word . '>\s*[;=].*$'
-
   let def_line = search(search_expr, 'cbnW', stopline)
   return substitute(
         \ substitute(
-        \ substitute(getline(def_line), '\v<' . word . '>.*', '', '')
+        \ substitute(getline(def_line),'\v^\s+\S+.{-}\zs<' . word . '>.*','', '')
         \ , '\v\<[^>]\>', '', '')
         \ , '\v^\s+|\s+$', '', 'g')
 endfunction "}}}
@@ -268,6 +266,6 @@ command! CompileOnSaveToggle call ToggleSettingCompileOnSave()
 command! CacheCurrProjMaven call CacheThisMavenProj()
 command! JavaC call JavaCBuffer()
 command! Junit call JUnitCurrent()
-command! Javap call JavapVar_Annotation()
+command! Javap call Javap_cword()
 nnoremap g7 :call <SID>javap_current()<cr>
 
