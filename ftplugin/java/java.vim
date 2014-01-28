@@ -266,6 +266,6 @@ command! CompileOnSaveToggle call ToggleSettingCompileOnSave()
 command! CacheCurrProjMaven call CacheThisMavenProj()
 command! JavaC call JavaCBuffer()
 command! Junit call JUnitCurrent()
-command! Javap call Javap_cword()
+command! Javap call Javapcword()
 nnoremap g7 :call <SID>javap_current()<cr>
 
