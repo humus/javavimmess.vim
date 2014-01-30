@@ -139,7 +139,9 @@ fun! JavaCBuffer() "{{{
 endfunction "}}}
 
 fun! s:normalize_command(command) "{{{
-  return substitute(a:command, '\v(-g)@<!:', ';', 'g')
+  if has('win32')
+    return substitute(a:command, '\v(-g|C)@<!:', ';', 'g')
+  endif
 endfunction "}}}
 
 let b:is_compile_on_save = 0
@@ -219,11 +221,11 @@ fun! FindDeclaredType() abort "{{{
         \ , ''
         \ , '\v^%(\t|    )}'
         \ , 'bn')
-  let search_expr = '\v^\s+\S+.*(\=)@<!\s<' . word . '>\s*[;=].*$'
+  let search_expr = '\v^\s+(final\s)?\S+.*(\=)@<!\s<' . word . '>\s*[;=].*$'
   let def_line = search(search_expr, 'cbnW', stopline)
   return substitute(
         \ substitute(
-        \ substitute(getline(def_line),'\v^\s+\S+.{-}\zs<' . word . '>.*','', '')
+        \ substitute(getline(def_line),'\v^\s+(final\s)\S+.{-}\zs<' . word . '>.*','', '')
         \ , '\v\<[^>]\>', '', '')
         \ , '\v^\s+|\s+$', '', 'g')
 endfunction "}}}
