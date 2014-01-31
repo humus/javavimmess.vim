@@ -217,7 +217,7 @@ endfunction "}}}
 fun! FindDeclaredType() abort "{{{
   let word = expand('<cword>')
   let stopline = searchpair(
-        \ '\v^%(\t|    )%(private|protected|public).{-}\w+\('
+        \ '\v^%(\t|    )%(private|protected|public)?.{-}\w+\('
         \ , ''
         \ , '\v^%(\t|    )}'
         \ , 'bn')
@@ -225,7 +225,7 @@ fun! FindDeclaredType() abort "{{{
   let def_line = search(search_expr, 'cbnW', stopline)
   return substitute(
         \ substitute(
-        \ substitute(getline(def_line),'\v^\s+(final\s)\S+.{-}\zs<' . word . '>.*','', '')
+        \ substitute(getline(def_line),'\v^\s+(final\s)?\S+.{-}\zs<' . word . '>.*','', '')
         \ , '\v\<[^>]\>', '', '')
         \ , '\v^\s+|\s+$', '', 'g')
 endfunction "}}}
