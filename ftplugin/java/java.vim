@@ -4,9 +4,13 @@ let s:junit_exec = 'java -cp .cache/*:target/classes:target/test-classes org.jun
 let s:javap_exec = 'javap -public -classpath .cache/*:target/classes:target/test-classes'
 let s:javap_curr_exec = 'javap -private -classpath .cache/*:target/classes:target/test-classes'
 let b:compile_on_save = 0
+let s:autocompl_inserted = 0
+let s:selected_class = ''
+
 
 fun! CacheThisMavenProj() "{{{
   let adir = matchstr(findfile('pom.xml', '.;'), '\v.+\zepom\.xml$')
+  if adir == '' | let adir = '.' | endif
   let cmd_height = &cmdheight
   set cmdheight=3
   let is_regenerated = s:prompt_regenerate_cache(adir)
@@ -81,14 +85,14 @@ fun! s:exec_copies_win32(files) "{{{
     endif
   endfor
   call  s:exec_copy_command_win32(files_to_copy)
-  redraw | echo 'DONE'
+  redraw | echo 'DONE creating jar cache'
 endfunction "}}}
 
 fun! s:exec_copies(files) "{{{
   let files = map(copy(a:files), 'fnameescape(v:val)')
   let cmdstr = 'cp ' . join(files, ' ') . ' .cache'
   call system(cmdstr)
-  redraw | echo 'DONE'
+  redraw | echo 'DONE creating jar cache'
 endfunction "}}}
 
 fun! s:exec_copy_command_win32(files) "{{{
@@ -100,8 +104,107 @@ fun! s:exec_copy_command_win32(files) "{{{
   call system(cmdstr)
 endfunction "}}}
 
+fun! s:create_sublists(files, size) "{{{
+  let partial_lists = []
+  let local_files = copy(a:files)
+  while len(local_files) > 0
+    let list_size = len(local_files)
+    let mod_ = len(local_files) % a:size
+    if mod_ > 0
+      let foo = remove(local_files, -1 * mod_, -1)
+      call add(partial_lists, foo)
+    else
+      let foo = remove(local_files, -1 * a:size, -1)
+      call add(partial_lists, foo)
+    endif
+  endwhile
+  return partial_lists
+endfunction "}}}
+
+fun! s:list_classes_win32(file_sublists, total) "{{{
+  let counter = 0
+  for sublist in a:file_sublists
+    call map(sublist, 's:str_jartf_call(v:val, ''findstr'')')
+    let command = join(sublist, ' && ')
+    call system(command)
+    let counter += len(sublist)
+    redraw | echom counter ' / ' . a:total
+  endfor
+  redraw | echom 'DONE listing classes'
+endfunction "}}}
+
+fun! s:list_classes(file_sublists, total) "{{{
+  let counter = 0
+  for sublist in a:file_sublists
+    call map(sublist, 's:str_jartf_call(v:val, ''grep'')')
+    let command = join(sublist, ' && ')
+    call system(command)
+    let counter += len(sublist)
+    redraw | echom counter ' / ' . a:total
+  endfor
+endfunction "}}}
+
+fun! s:str_jartf_call(file_name, grep_expr) "{{{
+  return substitute(substitute(a:file_name, '\v^', 'jar tf ', ''),
+        \ '\v$', ' | ' . a:grep_expr . ' class$ >> classes.index', '')
+endfunction "}}}
+
+fun! s:sort_file_index() "{{{
+  let lines = []
+  if filereadable('classes.index')
+    let lines = readfile('classes.index')
+    call filter(lines, 'v:val =~ ''\v^[^$]+$'' && v:val !~ ''package-info''')
+    call map(lines, 's:reformat_index_line(v:val)')
+    call sort(lines)
+    call writefile(lines, 'classes.index')
+  endif
+endfunction "}}}
+
+fun! s:reformat_index_line(index_line) "{{{
+  return substitute(substitute(a:index_line, '\v^(.+/(\w+)).class', '\2	\1', ''),
+    \ '\v/', '.', 'g')
+endfunction "}}}
+
+fun! s:extract_class_names() "{{{
+  let lines = readfile('classes.index')
+  let classnames = map(copy(lines), 'matchstr(v:val, ''\v^\S+\ze	.*'')')
+  let classnames = filter(copy(classnames), 'index(classnames, v:val, v:key+1) == -1')
+  call writefile(classnames, 'classnames.index')
+endfunction "}}}
+
+fun! s:sort_file_index_cd() "{{{
+  let dirs = s:calculate_dirs()
+  exe 'lcd ' . dirs.project_dir
+  lcd .cache
+  call s:extract_class_names()
+  exe 'lcd ' . dirs.cwd_
+endfunction "}}}
+
+command! FileIndexSort call s:sort_file_index_cd()
+
+fun! List_classes_cache() "{{{
+  let dirs = s:calculate_dirs()
+  exe "lcd " . dirs.project_dir
+  lcd .cache
+  try
+    let jar_files = split(globpath('.', "*.jar"), '\n')
+    let sublists = s:create_sublists(jar_files, 15)
+    if has('win32')
+      call s:list_classes_win32(sublists, len(jar_files))
+    else
+      call s:list_classes(sublists, len(jar_files))
+    endif
+    call s:sort_file_index()
+  finally
+    exe "lcd " . dirs.cwd_dir
+  endtry
+endfunction "}}}
+
 fun! s:calculate_dirs() "{{{
   let project_dir = fnameescape(matchstr(findfile('pom.xml', '.;'), '\v.+\zepom\.xml$'))
+  if project_dir == ''
+    let project_dir = '.'
+  endif
   let cwd_dir = fnameescape(getcwd())
   return {'project_dir': project_dir, 'cwd_dir': cwd_dir}
 endfunction "}}}
@@ -175,16 +278,19 @@ endfunction "}}}
 fun! s:descVar_annotation() "{{{
   let desc = {}
   let var_annotation = expand('<cWORD>')
-  if var_annotation =~? '\v\@'
+  if var_annotation =~? '\v<\@'
     let desc.type = 'annotation'
-  else
+  endif
+
+  if expand('<cword>') =~# '\v\C[a-z]'
     let desc.type = 'variable'
+  elseif expand('<cword>') =~# '\v\C[A-z]'
+    let desc.type = 'class'
   endif
-
   if desc.type == 'annotation'
-    let search_for_import = expand('<cWORD>')
+    let search_for_import = expand('<cword>')
   endif
-
+  return desc
 endfunction "}}}
 
 fun! s:exec_javap(clazz) "{{{
@@ -239,7 +345,6 @@ fun! Javapcword() "{{{
     let clazz = matchstr(getline(line_import), '\v^import\s+\zs.*\ze\W')
     let lines = split(system(s:normalize_command(s:javap_exec . ' ' . clazz)), '\v\n')
     for l in lines | echom l | endfor
-    pwd
   finally
     exe "lcd " . dirs.cwd_dir
   endtry
@@ -258,6 +363,102 @@ fun! FindImport(clazz) "{{{
   return _pos
 endfunction "}}}
 
+fun! s:relocate_cursor() "{{{
+  echo 'relocating cursor'
+endfunction "}}}
+
+fun! s:prepare_restoring_working_window() "{{{
+  augroup retore_insert_mode
+      au BufEnter <buffer> if s:autocompl_inserted
+            \ | call s:relocate_cursor()
+            \ | normal a 
+          \ | endif
+  augroup END
+endfunction "}}}
+
+fun! CreateAutoImportWindow(back_to_insert_mode) "{{{
+  if a:back_to_insert_mode
+    call s:prepare_restoring_working_window()
+  endif
+  let working_window = bufwinnr('%')
+  let dirs = s:calculate_dirs()
+  exe 'lcd ' . dirs.project_dir
+  try
+    let search_term = expand('<cword>')
+    keepalt bot new
+    silent f auto import list
+    setlocal buftype=nowrite bufhidden=wipe nobuflisted noswapfile number
+    setlocal nonu
+    call s:fill_buffer_imports(search_term)
+    setl nomodifiable
+    call s:mappings_for_auto_import_window()
+  finally
+    exe "lcd " . dirs.cwd_dir
+  endtry
+endfunction "}}}
+
+fun! s:fill_buffer_imports(search_term) "{{{
+  let lines_imports = s:grep_cword_from_index(a:search_term)
+  call setline(1, lines_imports[0])
+  if len(lines_imports) > 0
+    call append(1, lines_imports[1:])
+  endif
+endfunction "}}}
+
+fun! s:grep_cword_from_index(search_term) "{{{
+    if has('win32')
+      let search_expr = 'findstr /I "^' . a:search_term . '" < ' . '.cache/classes.index'
+    else
+      let search_expr = 'grep -i -e ^' . a:search_term . ' .cache/classes.index'
+    endif
+    let contents = split(system(search_expr), '\n')
+    return contents
+endfunction "}}}
+
+fun! s:mappings_for_auto_import_window() "{{{
+  nnoremap <silent><buffer> q ZZ
+  nnoremap <silent><buffer> u <Nop>
+  nnoremap <silent><buffer> p <Nop>
+  nnoremap <silent><buffer> P <Nop>
+  nnoremap <silent><buffer> o <Nop>
+  nnoremap <silent><buffer> O <Nop>
+  nnoremap <silent><buffer> a <Nop>
+  nnoremap <silent><buffer> A <Nop>
+  nnoremap <silent><buffer> i <Nop>
+  nnoremap <silent><buffer> I <Nop>
+  nnoremap <silent><buffer> <C-w>h <Nop>
+  nnoremap <silent><buffer> <C-w>j <Nop>
+  nnoremap <silent><buffer> <C-w>k <Nop>
+  nnoremap <silent><buffer> <C-w>l <Nop>
+  nnoremap <silent><buffer> <C-w>w <Nop>
+  nnoremap <silent><buffer> <C-w>p <Nop>
+  nnoremap <silent><buffer><Tab>  :<C-U>call <SID>move_down(v:count1)<CR>
+  nnoremap <silent><buffer><BS>   :<C-U>call <SID>move_up(v:count1)<CR>
+endfunction "}}}
+
+fun! s:move_up(count) "{{{
+  if line('.') - a:count <= 0
+    let additional_move = a:count - line('.')
+    normal G
+    if additional_move > 0
+      exe 'normal ' . additional_move . 'k'
+    endif
+    return
+  endif
+  exe 'normal ' . a:count . 'k'
+endfunction "}}}
+
+fun! s:move_down(count) "{{{
+  if line('.') + a:count >= line('$')
+    let additional_move = line('.') + a:count - line('$')
+    normal gg
+    if additional_move > 0
+      exe 'normal ' . additional_move . 'j'
+    endif
+    return
+  endif
+  exe 'normal ' . a:count . 'j'
+endfunction "}}}
 
 augroup command_on_save
   au!
@@ -270,4 +471,6 @@ command! JavaC call JavaCBuffer()
 command! Junit call JUnitCurrent()
 command! Javap call Javapcword()
 nnoremap g7 :call <SID>javap_current()<cr>
+inoremap <C-g>i <Esc>:call CreateAutoImportWindow(1)<cr>
+nnoremap <C-g>i :call CreateAutoImportWindow(0)<cr>
 
