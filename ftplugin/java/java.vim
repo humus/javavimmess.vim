@@ -21,7 +21,7 @@ fun! CacheThisMavenProj() "{{{
 endfunction "}}}
 
 fun! s:prompt_regenerate_cache(adir) "{{{
-  let adir = a:adir . '.cache'
+  let adir = a:adir . '/.cache'
   let regenerated=1
   if isdirectory(adir)
     echo 'Do you want to regenerate cache?'
@@ -47,7 +47,7 @@ fun! s:delete_dir(a_dir) "{{{
 endfunction "}}}
 
 fun! s:populate_cache(a_dir) "{{{
-  call mkdir(a:a_dir . '.cache', 'p')
+  call mkdir(a:a_dir . '/.cache', 'p')
   let cwd_ = getcwd()
   exe "cd " . a:a_dir
   let paths = s:parse_mvn_output()
@@ -125,7 +125,9 @@ fun! s:list_classes_win32(file_sublists, total) "{{{
   let counter = 0
   for sublist in a:file_sublists
     call map(sublist, 's:str_jartf_call(v:val, ''findstr'')')
-    let command = join(sublist, ' && ')
+    " && echo on <-- it's added because system(...) ignores last command
+    " after "&&" I don't know why
+    let command = join(sublist, ' && ') . ' && echo on'
     call system(command)
     let counter += len(sublist)
     redraw | echom counter ' / ' . a:total
@@ -363,23 +365,7 @@ fun! FindImport(clazz) "{{{
   return _pos
 endfunction "}}}
 
-fun! s:relocate_cursor() "{{{
-  echo 'relocating cursor'
-endfunction "}}}
-
-fun! s:prepare_restoring_working_window() "{{{
-  augroup retore_insert_mode
-      au BufEnter <buffer> if s:autocompl_inserted
-            \ | call s:relocate_cursor()
-            \ | normal a 
-          \ | endif
-  augroup END
-endfunction "}}}
-
 fun! CreateAutoImportWindow(back_to_insert_mode) "{{{
-  if a:back_to_insert_mode
-    call s:prepare_restoring_working_window()
-  endif
   let working_window = bufwinnr('%')
   let dirs = s:calculate_dirs()
   exe 'lcd ' . dirs.project_dir
@@ -391,7 +377,7 @@ fun! CreateAutoImportWindow(back_to_insert_mode) "{{{
     setlocal nonu
     call s:fill_buffer_imports(search_term)
     setl nomodifiable
-    call s:mappings_for_auto_import_window()
+    call s:mappings_for_auto_import_window(a:back_to_insert_mode)
   finally
     exe "lcd " . dirs.cwd_dir
   endtry
@@ -415,7 +401,8 @@ fun! s:grep_cword_from_index(search_term) "{{{
     return contents
 endfunction "}}}
 
-fun! s:mappings_for_auto_import_window() "{{{
+fun! s:mappings_for_auto_import_window(back_to_insert_mode) "{{{
+  let s:back_to_insert_mode = a:back_to_insert_mode
   nnoremap <silent><buffer> q ZZ
   nnoremap <silent><buffer> u <Nop>
   nnoremap <silent><buffer> p <Nop>
@@ -432,8 +419,25 @@ fun! s:mappings_for_auto_import_window() "{{{
   nnoremap <silent><buffer> <C-w>l <Nop>
   nnoremap <silent><buffer> <C-w>w <Nop>
   nnoremap <silent><buffer> <C-w>p <Nop>
-  nnoremap <silent><buffer><Tab>  :<C-U>call <SID>move_down(v:count1)<CR>
-  nnoremap <silent><buffer><BS>   :<C-U>call <SID>move_up(v:count1)<CR>
+  nnoremap <silent><buffer> <Tab>  :<C-U>call <SID>move_down(v:count1)<CR>
+  nnoremap <silent><buffer> <BS>   :<C-U>call <SID>move_up(v:count1)<CR>
+  exe "nnoremap \<silent>\<buffer> \<CR> :call \<SID>import_current_class( ". s:back_to_insert_mode . " )\<CR>"
+endfunction "}}}
+
+fun! s:import_current_class(back_to_insert_mode) "{{{
+  let import = matchstr(getline(line('.')), '\v^[^	]+	\zs.*')
+  let import = 'import ' . import . ';'
+  normal q
+  let already_imported = search('\v^import' . import, 'bnW')
+  if already_imported
+    echohl WarningMsg | echom 'Already Imported' | echohl None
+  else
+    let last_import = search('\v^import\s(static)@!.*$', 'bnW')
+    call append(last_import, import)
+  endif
+  if a:back_to_insert_mode
+    call feedkeys("a\<C-x>\<C-n>")
+  endif
 endfunction "}}}
 
 fun! s:move_up(count) "{{{
@@ -449,8 +453,8 @@ fun! s:move_up(count) "{{{
 endfunction "}}}
 
 fun! s:move_down(count) "{{{
-  if line('.') + a:count >= line('$')
-    let additional_move = line('.') + a:count - line('$')
+  if line('.') + a:count > line('$')
+    let additional_move = line('.') + a:count - (line('$') + 1)
     normal gg
     if additional_move > 0
       exe 'normal ' . additional_move . 'j'
@@ -465,12 +469,14 @@ augroup command_on_save
   au BufWritePost *.java call CompileOnSave()
 augroup END
 
-command! CompileOnSaveToggle call ToggleSettingCompileOnSave()
-command! CacheCurrProjMaven call CacheThisMavenProj()
-command! JavaC call JavaCBuffer()
-command! Junit call JUnitCurrent()
-command! Javap call Javapcword()
-nnoremap g7 :call <SID>javap_current()<cr>
-inoremap <C-g>i <Esc>:call CreateAutoImportWindow(1)<cr>
-nnoremap <C-g>i :call CreateAutoImportWindow(0)<cr>
+command! -buffer CompileOnSaveToggle call ToggleSettingCompileOnSave()
+command! -buffer CacheCurrProjMaven call CacheThisMavenProj()
+command! -buffer JavaC call JavaCBuffer()
+command! -buffer Junit call JUnitCurrent()
+command! -buffer Javap call Javapcword()
+nnoremap <silent><buffer> g7 :call <SID>javap_current()<cr>
+inoremap <silent><buffer> <C-g><C-p> <Esc>:call CreateAutoImportWindow(1)<cr>
+inoremap <silent><buffer> <C-g>p <Esc>:call CreateAutoImportWindow(1)<cr>
+nnoremap <silent><buffer> <C-g><C-p> :call CreateAutoImportWindow(0)<cr>
+nnoremap <silent><buffer> <C-g>p :call CreateAutoImportWindow(0)<cr>
 
