@@ -10,7 +10,7 @@ let s:selected_class = ''
 
 fun! CacheThisMavenProj() "{{{
   let adir = matchstr(findfile('pom.xml', '.;'), '\v.+\zepom\.xml$')
-  if adir == '' | let adir = '.' | endif
+  if adir == '' | let adir = './' | endif
   let cmd_height = &cmdheight
   set cmdheight=3
   let is_regenerated = s:prompt_regenerate_cache(adir)
@@ -21,7 +21,7 @@ fun! CacheThisMavenProj() "{{{
 endfunction "}}}
 
 fun! s:prompt_regenerate_cache(adir) "{{{
-  let adir = a:adir . '/.cache'
+  let adir = a:adir . '.cache'
   let regenerated=1
   if isdirectory(adir)
     echo 'Do you want to regenerate cache?'
@@ -47,7 +47,7 @@ fun! s:delete_dir(a_dir) "{{{
 endfunction "}}}
 
 fun! s:populate_cache(a_dir) "{{{
-  call mkdir(a:a_dir . '/.cache', 'p')
+  call mkdir(a:a_dir . '.cache', 'p')
   let cwd_ = getcwd()
   exe "cd " . a:a_dir
   let paths = s:parse_mvn_output()
@@ -58,7 +58,7 @@ endfunction "}}}
 fun! s:parse_mvn_output() "{{{
   let mvn_output = system('mvn dependency:build-classpath')
   let lines = split(mvn_output, '\n')
-  let line = filter(lines, 'v:val =~ ''\vjar[;:]''')[0]
+  let line = filter(lines, 'v:val =~ ''\vjar[;:]'' && v:val !~ ''\vWARNING''')[0]
   let paths = split(line, '\v(^C|;C)@<![:;]')
   return paths
 endfunction "}}}
