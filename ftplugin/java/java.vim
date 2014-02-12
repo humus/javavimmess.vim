@@ -6,9 +6,16 @@ let s:javap_curr_exec = 'javap -private -classpath .cache/*:target/classes:targe
 let b:compile_on_save = 0
 let s:autocompl_inserted = 0
 let s:selected_class = ''
+let g:dict_javavim = {}
+"code taken from xptemplate plugin
+let s:let_sid = 'map <Plug>jsid <SID>|let s:sid=matchstr(maparg("<Plug>jsid"), "\\d\\+_")|unmap <Plug>jsid'
+exe s:let_sid
 
+let s:method_def_expr =
+\ '\v^%(\t|    )%((private |protected |public )%((public|private|protected)@!))?[[:alnum:]]+(\<.+\>)?[[:space:]\n]{1,}[[:alnum:]\$]+\s{-}\('
+let s:method_bodystart_expr = '\v\{'
 
-fun! CacheThisMavenProj() "{{{
+fun! CacheThisMavenProj() abort "{{{
   let adir = matchstr(findfile('pom.xml', '.;'), '\v.+\zepom\.xml$')
   if adir == '' | let adir = './' | endif
   let cmd_height = &cmdheight
@@ -46,7 +53,7 @@ fun! s:delete_dir(a_dir) "{{{
   endif
 endfunction "}}}
 
-fun! s:populate_cache(a_dir) "{{{
+fun! s:populate_cache(a_dir) abort "{{{
   call mkdir(a:a_dir . '.cache', 'p')
   let cwd_ = getcwd()
   exe "cd " . a:a_dir
@@ -74,18 +81,45 @@ endfunction "}}}
 fun! s:exec_copies_win32(files) "{{{
   let len_of_files = len(a:files)
   let files_to_copy = []
-  "I think slicing is much more effective
-  "Hope find time to test the theory
-  for i in range(len_of_files)
-    call add(files_to_copy, a:files[i])
-    if len(files_to_copy) % 25 == 0
-      call s:exec_copy_command_win32(files_to_copy)
-      let files_to_copy = []
-      redraw | echo i + 1 . ' of ' . len_of_files
-    endif
+  let partial_lists = s:create_sublists(a:files, 25)
+  let counter = 0
+  for files_to_copy in partial_lists
+    call s:exec_copy_command_win32(files_to_copy)
+    let counter += len(files_to_copy)
+    redraw | echo counter . ' / ' . len_of_files
   endfor
-  call  s:exec_copy_command_win32(files_to_copy)
   redraw | echo 'DONE creating jar cache'
+endfunction "}}}
+
+fun! s:get_method_def() dict "{{{
+  let method_start_line = search(s:method_def_expr, 'bcn')
+  let lines_of_method_def = [getline(method_start_line)]
+  let line_counter = method_start_line + 1
+  while (getline(line_counter-1) !~ s:method_bodystart_expr)
+    call add(lines_of_method_def, getline(line_counter))
+    let line_counter+=1
+  endwhile
+  let self.definition = substitute(join(lines_of_method_def, ' '), '\v\s{2,}', ' ', 'g')
+  let self.definition = substitute(self.definition, '\v^\s+', '', '')
+  return self.definition
+endfunction "}}}
+
+fun! s:strip_parens() dict "{{{
+  let self.definition = substitute(substitute(self.definition, '\v.*\(\s*', '', ''),
+    \ '\v\s*\).*', '', '')
+  return self.definition
+endfunction "}}}
+
+fun! s:strip_generics() dict "{{{
+  let self.definition = substitute(self.definition, '\v\<.+\>', '', 'g')
+  return self.definition
+endfunction "}}}
+
+fun! s:return_def_variables() dict "{{{
+  call self.methoddef()
+  call self.strip_parens()
+  call self.strip_generics()
+  return split(self.definition, '\s*,\s*')
 endfunction "}}}
 
 fun! s:exec_copies(files) "{{{
@@ -323,9 +357,11 @@ endfunction "}}}
 "class loaded in the current buffer. And when it's not an annotation
 "Not a constant and is not in the parameters of the method
 fun! FindDeclaredType() abort "{{{
+"s:method_def_expr <-- is The madness of a expression Which finds line where method begins
+" I normally format files so, this has to match almost always -> '\v^%(\t|    )\}'
   let word = expand('<cword>')
   let stopline = searchpair(
-        \ '\v^%(\t|    )%(private|protected|public)?.{-}\w+\('
+        \ s:method_def_expr 
         \ , ''
         \ , '\v^%(\t|    )}'
         \ , 'bn')
@@ -338,11 +374,30 @@ fun! FindDeclaredType() abort "{{{
         \ , '\v^\s+|\s+$', '', 'g')
 endfunction "}}}
 
+fun! s:findDeclaredTypeInMethod() "{{{
+  let variables = g:dict_javavim.def_variables_method()
+  let variableNames = map(copy(variables), 'matchstr(v:val, ''\v\w+$'')')
+  let position = index(variableNames, expand('<cword>'))
+  if position >= 0
+    return matchstr(variables[position], '\v^\w+')
+  else
+    return ''
+  endif
+endfunction "}}}
+
 fun! Javapcword() "{{{
+  let word = expand('<cword>')
+  if getline(line('.'))[col('.') - 1] !~ '\w'
+    echohl WarningMsg | echom 'NOT ON <cword>' | echohl None
+    return
+  endif
   let dirs = s:calculate_dirs()
   try
     exe "lcd " . dirs.project_dir
-    let type = FindDeclaredType()
+    let type = s:findDeclaredTypeInMethod()
+    if type == ''
+      let type = FindDeclaredType()
+    endif
     let line_import = FindImport(type)
     let clazz = matchstr(getline(line_import), '\v^import\s+\zs.*\ze\W')
     let lines = split(system(s:normalize_command(s:javap_exec . ' ' . clazz)), '\v\n')
@@ -468,6 +523,11 @@ augroup command_on_save
   au!
   au BufWritePost *.java call CompileOnSave()
 augroup END
+
+let g:dict_javavim['methoddef'] = function('<SNR>' . s:sid . 'get_method_def')
+let g:dict_javavim['strip_parens'] = function('<SNR>' . s:sid . 'strip_parens')
+let g:dict_javavim['strip_generics'] = function('<SNR>' . s:sid . 'strip_generics')
+let g:dict_javavim['def_variables_method'] = function('<SNR>' . s:sid . 'return_def_variables')
 
 command! -buffer CompileOnSaveToggle call ToggleSettingCompileOnSave()
 command! -buffer CacheCurrProjMaven call CacheThisMavenProj()
