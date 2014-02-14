@@ -105,20 +105,20 @@ fun! s:get_method_def() dict "{{{
 endfunction "}}}
 
 fun! s:strip_parens() dict "{{{
-  let self.definition = substitute(substitute(self.definition, '\v.*\(\s*', '', ''),
-    \ '\v\s*\).*', '', '')
+  let self.definition = matchstr(self.definition, '(\zs.*\ze)')
   return self.definition
 endfunction "}}}
 
-fun! s:strip_generics() dict "{{{
-  let self.definition = substitute(self.definition, '\v\<.+\>', '', 'g')
+fun! s:strip_to_plain_params() dict "{{{
+  let l:definition = substitute(self.definition, '\v\s*\@\w+(\(.{-}\))?\s*', '', 'g')
+  let self.definition = substitute(l:definition, '\v\<.+\>', '', 'g')
   return self.definition
 endfunction "}}}
 
 fun! s:return_def_variables() dict "{{{
   call self.methoddef()
   call self.strip_parens()
-  call self.strip_generics()
+  call self.strip_to_plain_params()
   return split(self.definition, '\s*,\s*')
 endfunction "}}}
 
@@ -281,6 +281,7 @@ fun! s:normalize_command(command) "{{{
   if has('win32')
     return substitute(a:command, '\v(-g|C)@<!:', ';', 'g')
   endif
+  return a:command
 endfunction "}}}
 
 let b:is_compile_on_save = 0
@@ -409,7 +410,7 @@ endfunction "}}}
 
 fun! FindImport(clazz) "{{{
   let a_class = a:clazz
-  let expression = '^import .\+\<' . a_class . ';'
+  let expression = '\v^import .+<' . a_class . ';'
 
   let _pos = searchpos(expression, 'bn')[0]
 
@@ -427,7 +428,7 @@ fun! CreateAutoImportWindow(back_to_insert_mode) "{{{
   try
     let search_term = expand('<cword>')
     keepalt bot new
-    silent f auto import list
+    silent f auto\ import\ list
     setlocal buftype=nowrite bufhidden=wipe nobuflisted noswapfile number
     setlocal nonu
     call s:fill_buffer_imports(search_term)
@@ -524,13 +525,16 @@ augroup command_on_save
   au BufWritePost *.java call CompileOnSave()
 augroup END
 
+"Not totally sure a dictionary is will suited for this behavior
 let g:dict_javavim['methoddef'] = function('<SNR>' . s:sid . 'get_method_def')
 let g:dict_javavim['strip_parens'] = function('<SNR>' . s:sid . 'strip_parens')
-let g:dict_javavim['strip_generics'] = function('<SNR>' . s:sid . 'strip_generics')
+let g:dict_javavim['strip_to_plain_params'] = function('<SNR>' . s:sid . 'strip_to_plain_params')
 let g:dict_javavim['def_variables_method'] = function('<SNR>' . s:sid . 'return_def_variables')
 
 command! -buffer CompileOnSaveToggle call ToggleSettingCompileOnSave()
 command! -buffer CacheCurrProjMaven call CacheThisMavenProj()
+command! -buffer CreateIndex call CacheThisMavenProj() | call List_classes_cache()
+command! -buffer IndexCache call List_classes_cache()
 command! -buffer JavaC call JavaCBuffer()
 command! -buffer Junit call JUnitCurrent()
 command! -buffer Javap call Javapcword()
