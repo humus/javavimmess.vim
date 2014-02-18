@@ -12,11 +12,11 @@ let s:let_sid = 'map <Plug>jsid <SID>|let s:sid=matchstr(maparg("<Plug>jsid"), "
 exe s:let_sid
 
 let s:method_def_expr =
-\ '\v^%(\t|    )%((private |protected |public )%((public|private|protected)@!))?[[:alnum:]]+(\<.+\>)?[[:space:]\n]{1,}[[:alnum:]\$]+\s{-}\('
+\ '\v^%(\t|    )%((private |protected |public )%((public|private|protected)@!))?[[:alnum:]]+(\<.+\>)?[[:space:]\n]{1,}[[:alnum:]\$_]+\s{-}\('
 let s:method_bodystart_expr = '\v\{'
 
 fun! CacheThisMavenProj() abort "{{{
-  let adir = matchstr(findfile('pom.xml', '.;'), '\v.+\zepom\.xml$')
+  let adir = fnamemodify(findfile('pom.xml', '.;'), ':h')
   if adir == '' | let adir = './' | endif
   let cmd_height = &cmdheight
   set cmdheight=3
@@ -330,22 +330,37 @@ fun! s:descVar_annotation() "{{{
   return desc
 endfunction "}}}
 
-fun! s:exec_javap(clazz) "{{{
-  return split(system(s:normalize_command(s:javap_exec . ' ' . a:clazz)), '\n')
+fun! s:exec_javap(clazz, full) "{{{
+  let l:cmd = s:javap_exec
+  if a:full
+    let l:cmd = s:javap_curr_exec
+  endif
+  let l:output = system(s:normalize_command(l:cmd . ' ' . a:clazz))
+  return split(l:output, '\n')
 endfunction "}}}
 
 fun! s:javap_current() "{{{
   let dirs = s:calculate_dirs()
   exe 'lcd ' . dirs.project_dir
   try
-    let lines = split(system(s:normalize_command(s:javap_curr_exec. ' '
-          \ . s:current_clazz())), '\n')
+    let lines = s:exec_javap(s:current_clazz(), 0)
     for l in lines | echom l | endfor
   finally
     exe 'lcd ' . dirs.cwd_dir
   endtry
 endfunction "}}}
 
+fun! s:examine_javap_current() "{{{
+  let dirs = s:calculate_dirs()
+  exe 'lcd ' . dirs.project_dir
+  try
+    return exec_javap(s:current_clazz(), 1)
+  finally
+    exe 'lcd ' . dirs.cwd_dir
+  endtry
+endfunction "}}}
+
+"This method only works when vim is already in project's root dir
 fun! s:current_clazz() "{{{
   let clazz = expand('%')
   let clazz = substitute(clazz, '\v\.java$', '', '')
@@ -355,30 +370,31 @@ fun! s:current_clazz() "{{{
 endfunction "}}}
 
 "this function is called when current word is not property of the
-"class loaded in the current buffer. And when it's not an annotation
-"Not a constant and is not in the parameters of the method
-fun! FindDeclaredType() abort "{{{
-"s:method_def_expr <-- is The madness of a expression Which finds line where method begins
-" I normally format files so, this has to match almost always -> '\v^%(\t|    )\}'
-  let word = expand('<cword>')
+"class loaded in the current buffer and when is not in the parameters of the
+"method
+fun! FindDeclaredType(variable) abort "{{{
+"s:method_def_expr <-- is The madness of a expression Which finds line where
+"method begins I normally keep files well indented so, this have to match
+"almost always -> '\v^%(\t|    )\}'
   let stopline = searchpair(
         \ s:method_def_expr 
         \ , ''
         \ , '\v^%(\t|    )}'
         \ , 'bn')
-  let search_expr = '\v^\s+(final\s)?\S+.*(\=)@<!\s<' . word . '>\s*[;=].*$'
+  let search_expr = '\v^\s+(final\s)?\S+.*(\=)@<!\s' . a:variable . '\s*[;=].*$'
   let def_line = search(search_expr, 'cbnW', stopline)
+
   return substitute(
         \ substitute(
-        \ substitute(getline(def_line),'\v^\s+(final\s)?\S+.{-}\zs<' . word . '>.*','', '')
+        \ matchstr(getline(def_line),'\v^\s+(final\s)?\S+.{-}\ze\s' . a:variable . '.*')
         \ , '\v\<[^>]\>', '', '')
         \ , '\v^\s+|\s+$', '', 'g')
 endfunction "}}}
 
-fun! s:findDeclaredTypeInMethod() "{{{
+fun! s:findDeclaredTypeInMethod(variable) "{{{
   let variables = g:dict_javavim.def_variables_method()
   let variableNames = map(copy(variables), 'matchstr(v:val, ''\v\w+$'')')
-  let position = index(variableNames, expand('<cword>'))
+  let position = index(variableNames, a:variable)
   if position >= 0
     return matchstr(variables[position], '\v^\w+')
   else
@@ -386,21 +402,37 @@ fun! s:findDeclaredTypeInMethod() "{{{
   endif
 endfunction "}}}
 
-fun! Javapcword() "{{{
-  let word = expand('<cword>')
-  if getline(line('.'))[col('.') - 1] !~ '\w'
-    echohl WarningMsg | echom 'NOT ON <cword>' | echohl None
-    return
+fun! s:findDeclaredTypeInJavapOutput(var) abort "{{{
+  let javap_output = s:exec_javap(s:current_clazz(), 1)
+  let vars = filter(copy(javap_output), 'v:val =~ ''\v' . a:var . ';$''')
+  call map(vars, 'matchstr(v:val, ''\v^.+\.\zs\S+\ze\s+[\$_[:alnum:]]+;$'')')
+  if empty(vars)
+    return ''
+  else
+    return vars[0]
   endif
+endfunction "}}}
+
+" This method was sort of a spike and would be deleted
+fun! Javapcword() "{{{
+  let cur_line = getline(line('.'))
+  let cur_col = col('.')
+  if cur_line[cur_col - 1] !~ '\w' "Not on cword
+    echohl WarningMsg | echom 'NOT ON <cword>' | echohl None
+  endif
+  let word = expand('<cword>')
+  let word = substitute(word, '\v\$', '\\$', 'g')
   let dirs = s:calculate_dirs()
   try
     exe "lcd " . dirs.project_dir
-    let type = s:findDeclaredTypeInMethod()
+    let type = s:findDeclaredTypeInMethod(word)
     if type == ''
-      let type = FindDeclaredType()
+      let type = s:findDeclaredTypeInJavapOutput(word)
     endif
-    let line_import = FindImport(type)
-    let clazz = matchstr(getline(line_import), '\v^import\s+\zs.*\ze\W')
+    if type == ''
+      let type = FindDeclaredType(word)
+    endif
+    let clazz = FindClassType(type)
     let lines = split(system(s:normalize_command(s:javap_exec . ' ' . clazz)), '\v\n')
     for l in lines | echom l | endfor
   finally
@@ -437,6 +469,73 @@ fun! CreateAutoImportWindow(back_to_insert_mode) "{{{
   finally
     exe "lcd " . dirs.cwd_dir
   endtry
+endfunction "}}}
+
+fun! CreateDescribeWindow() "{{{
+  let working_window = bufwinnr('%')
+  let dirs = s:calculate_dirs()
+  exe 'lcd ' . dirs.project_dir
+  try
+    let cur_word = s:get_cword_or_blank()
+    if cur_word == ''
+      return
+    endif
+    " Word under cursor is a variable
+    " the totally weird cur_word[1]=='$' is because '$' has to be escaped
+    if cur_word =~# '\v^[a-z]' || cur_word[1] == '$'
+      let var_type = s:find_variable_type(cur_word)
+    else
+    " Word under cursor is a Class/Interface
+      let var_type = cur_word
+    endif
+    let full_class_name = FindClassType(var_type)
+    keepalt bot new
+    exe 'silent f describe\ ' . full_class_name
+    let lines = s:exec_javap(full_class_name, 0)
+    call filter(lines, 'v:val=~ ''\v^[[:space:]]+''')
+    call map(lines, 'substitute(v:val, ''\v^\s+public\s+'', '''', '''')')
+    call map(lines, 'substitute(v:val, ''\vjava\.lang\.'', '''', ''g'')')
+    call map(lines, 'substitute(v:val, ''\v(\w+\.)+\ze\w+\W'', '''', '''')')
+    call map(lines, 'substitute(v:val, ''\vstatic final\s+'', '''', '''')')
+    call setline(1, lines[0])
+    let line_num = 1
+    for line in lines[1:]
+      call append(line_num, line)
+      let line_num += 1
+    endfor
+  finally
+    exe "lcd " . dirs.cwd_dir
+  endtry
+endfunction "}}}
+
+fun! s:get_cword_or_blank() "{{{
+  let cur_line = getline(line('.'))
+  "Zero based index for string operations
+  let column = col('.') - 1
+  if cur_line[column] =~ '\v[^[:alnum:]\$_]'
+    return ''
+  endif
+
+  let last_col = s:find_last_word_column(column + 1)
+  let first_col = s:find_first_word_column(column - 1)
+
+  return substitute(cur_line[first_col : last_col], '\v\$', '\\$', 'g') | " yes, have to escape dollar sign
+endfunction "}}}
+
+fun! s:find_last_word_column(column) "{{{
+  let cur_line = getline(line('.'))
+  if cur_line[a:column] =~ '\v[^[:alnum:]\$_]'
+    return a:column - 1
+  endif
+  return s:find_last_word_column(a:column + 1)
+endfunction "}}}
+
+fun! s:find_first_word_column(column) "{{{
+  let cur_line = getline(line('.'))
+  if cur_line[a:column] =~ '\v[^[:alnum:]\$_]'
+    return a:column + 1
+  endif
+  return s:find_first_word_column(a:column - 1)
 endfunction "}}}
 
 fun! s:fill_buffer_imports(search_term) "{{{
@@ -525,11 +624,13 @@ augroup command_on_save
   au BufWritePost *.java call CompileOnSave()
 augroup END
 
-"Not totally sure a dictionary is will suited for this behavior
+"Not totally sure a dictionary is well suited for this behavior
 let g:dict_javavim['methoddef'] = function('<SNR>' . s:sid . 'get_method_def')
 let g:dict_javavim['strip_parens'] = function('<SNR>' . s:sid . 'strip_parens')
 let g:dict_javavim['strip_to_plain_params'] = function('<SNR>' . s:sid . 'strip_to_plain_params')
 let g:dict_javavim['def_variables_method'] = function('<SNR>' . s:sid . 'return_def_variables')
+
+nnoremap g5 :call CreateDescribeWindow()<CR>
 
 command! -buffer CompileOnSaveToggle call ToggleSettingCompileOnSave()
 command! -buffer CacheCurrProjMaven call CacheThisMavenProj()
