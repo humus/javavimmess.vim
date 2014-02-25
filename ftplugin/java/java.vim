@@ -374,8 +374,8 @@ endfunction "}}}
 "method
 fun! FindDeclaredType(variable) abort "{{{
 "s:method_def_expr <-- is The madness of a expression Which finds line where
-"method begins I normally keep files well indented so, this have to match
-"almost always -> '\v^%(\t|    )\}'
+"method begins I normally keep files well indented so, '\v^%(\t|    )\}' will
+"match correctly almost always
   let stopline = searchpair(
         \ s:method_def_expr 
         \ , ''
@@ -438,6 +438,58 @@ fun! Javapcword() "{{{
   finally
     exe "lcd " . dirs.cwd_dir
   endtry
+endfunction "}}}
+
+" When the word under cursor is a Variable this method is used
+" to find what is the type of the variable
+fun! s:find_variable_type(variable) "{{{
+  let type = s:findDeclaredTypeInMethod(a:variable)
+  if type == ''
+    let type = s:findDeclaredTypeInJavapOutput(a:variable)
+  endif
+  if type == ''
+    let type = FindDeclaredType(a:variable)
+  endif
+  return type
+endfunction "}}}
+
+fun! s:clean_current() "{{{
+  let base = expand('%:p:h')
+  call s:delete_current_class_file(base)
+endfunction "}}}
+
+fun! s:find_Project_Base(base) "{{{
+  let base_files = ['pom.xml', 'build.gradle', 'build.xml']
+  for base_file in base_files
+    let project_base = findfile(base_file, a:base . '.;' )
+    if project_base != ''
+      return fnamemodify(project_base, ':p:h')
+    endif
+  endfor
+  return ''
+endfunction "}}}
+
+function! s:delete_current_class_file(base)
+  let project_base = s:find_Project_Base(a:base)
+  if project_base != ''
+    let package = getline(searchpos("^package", 'bn')[0])
+    let package = substitute(package, ';', '', '')
+    let package = substitute(substitute(package, '\.', '/', 'g'),
+          \'package\s\+', '', '')
+    let package = substitute(package, '^\s\+\|\s\+$', '', 'g')
+    let class_file = project_base . '/target/classes/' . package
+    let class_file .= '/' . expand('%:t:r') . '.class'
+    call delete(class_file)
+    call feedkeys("\<C-l>")
+    call feedkeys("\<C-l>")
+    redraw
+  endif
+endfunction
+
+fun! FindClassType(clazz) "{{{
+  let line_import = FindImport(a:clazz)
+  let clazz = matchstr(getline(line_import), '\v^import\s+\zs.*\ze\W')
+  return clazz
 endfunction "}}}
 
 fun! FindImport(clazz) "{{{
@@ -619,6 +671,115 @@ fun! s:move_down(count) "{{{
   exe 'normal ' . a:count . 'j'
 endfunction "}}}
 
+" Alternation functions
+fun! s:Alternate() "{{{
+    let file_path = expand('%:p:h')
+    if file_path =~ '.*\<test\>'
+        call s:SwitchFromTest()
+        return
+    endif
+
+    call s:SwitchToTest()
+endfunction "}}}
+
+fun! s:SwitchFromTest() "{{{
+    let package_loc = search("^package", 'bn')
+    if package_loc == 0
+        echohl WarningMsg | echo 'NULL' | echohl None
+        return
+    endif
+    let package = getline(package_loc)
+    let file_path = expand('%:p:h')
+
+    let path_prefix = substitute(file_path, '\W\zstest\ze\W', 'main', '')
+
+    let test_name = expand('%:t:r')
+    let full_path_one = path_prefix . '/' . substitute(test_name, 'Test', '', '') . '.java'
+    let full_path_two = path_prefix . '/impl/' . substitute(test_name, 'Test', '', '') . 'Impl.java'
+    let full_path_three = path_prefix . '/' . substitute(test_name, 'Test', '', '') . 'Impl.java'
+
+    let paths = [full_path_one, full_path_two, full_path_three]
+
+    if !filereadable(full_path_one) && !filereadable(full_path_two) && !filereadable(full_path_three)
+        try
+            call CreateFileToTest(paths, package)
+        catch /CANCEL/
+             echohl WarningMsg | echo "CANCEL" | echohl None
+             return
+        endtry
+    endif
+
+    for full_path in paths
+        if filereadable(full_path) && filewritable(full_path)
+            let file_to_test = full_path
+            break
+        endif
+    endfor
+
+    silent! exe 'e ' . file_to_test
+
+endfunction "}}}
+
+silent! fun! CreateFileToTest(paths, package) "{{{
+    let message = ''
+    for path_ in a:paths
+        let message .= path_ . "\n"
+    endfor
+
+    echo a:paths
+    let message .= 'None, Cancel'
+
+    let choice = confirm('File will be?', message, 1)
+
+    if choice == 0 || choice == len(a:paths) + 1
+        throw "CANCEL"
+    endif
+
+    let path = a:paths[choice-1]
+    let a_dir = join(split(path, '[\\/]')[:-2], '/')
+
+    if !isdirectory(a_dir)
+        call mkdir(a_dir, 'p')
+    endif
+
+    let package = a:package
+
+    if a_dir =~ 'impl\W'
+        let package .= '.impl'
+    endif
+
+    let class_name = split(split(path, '[\\/]')[-1], '\.')[0]
+
+    call writefile([package
+                \ , '', 'public class ' . class_name
+                \ . '/*implements ' . substitute(class_name, 'Impl', '', ''), '*/ {'
+                \ , '', '}', ''], path)
+endfunction "}}}
+
+fun! s:SwitchToTest() "{{{
+    let package_loc = search("^package", 'bn')
+    if package_loc == 0
+        echohl WarningMsg | echo 'NULL' | echohl None
+        return
+    endif
+    let package = getline(package_loc)
+    let file_path = expand('%:p:h')
+
+    let new_file_path = substitute(substitute(file_path, '\W\zsmain\ze\W', 'test', ''), '\W\zsimpl\(\W\|$\)', '', '')
+
+    if !isdirectory(new_file_path)
+        call mkdir(new_file_path, 'p')
+    endif
+
+    let test_name = substitute(expand('%:t:r'), '\(Impl\|Test\)$', '', '') . 'Test.java'
+    let test_file = new_file_path . '/' . test_name
+
+    if !filewritable(test_file) && !filereadable(test_file)
+        call writefile([package, '', 'public class ' . split(test_name, '\.')[0] . ' {', '' , '}'], test_file)
+    endif
+    silent! execute 'e ' . test_file
+endfunction "}}}
+
 augroup command_on_save
   au!
   au BufWritePost *.java call CompileOnSave()
@@ -639,9 +800,9 @@ command! -buffer IndexCache call List_classes_cache()
 command! -buffer JavaC call JavaCBuffer()
 command! -buffer Junit call JUnitCurrent()
 command! -buffer Javap call Javapcword()
+command! -buffer A call s:Alternate()
 nnoremap <silent><buffer> g7 :call <SID>javap_current()<cr>
 inoremap <silent><buffer> <C-g><C-p> <Esc>:call CreateAutoImportWindow(1)<cr>
 inoremap <silent><buffer> <C-g>p <Esc>:call CreateAutoImportWindow(1)<cr>
 nnoremap <silent><buffer> <C-g><C-p> :call CreateAutoImportWindow(0)<cr>
 nnoremap <silent><buffer> <C-g>p :call CreateAutoImportWindow(0)<cr>
-
