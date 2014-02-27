@@ -547,13 +547,17 @@ fun! CreateDescribeWindow() "{{{
     if cur_word == ''
       return
     endif
-    let var_type = s:find_variable_type(cur_word)
+    if cur_word !~# '^[A-Z]'
+      let var_type = s:find_variable_type(cur_word)
+    else
+      let var_type = cur_word
+    endif
     let full_class_name = FindClassType(var_type)
     keepalt bot new
     exe 'silent f describe\ ' . full_class_name
     let lines = s:exec_javap(full_class_name, 0)
     let lines = s:format_javap_output(lines)
-    call map(a:lines, 'substitute(v:val, ''\vstatic final\s+'', '''', '''')')
+    call map(lines, 'substitute(v:val, ''\vstatic final\s+'', '''', '''')')
     call setline(1, lines[0])
     let line_num = 1
     for line in lines[1:]
@@ -578,7 +582,7 @@ fun! s:get_cword_or_blank() "{{{
   let cur_line = getline(line('.'))
   "Zero based index for string operations
   let column = col('.') - 1
-  if cur_line[column] =~ '\v[^[:alnum:]\$_]'
+  if cur_line[column] =~ '\v[^[:alnum:]\$_]' || cur_line =~ '\v^$'
     return ''
   endif
 
@@ -869,7 +873,7 @@ fun! Complete_Java_Fun(findstart, base) "{{{
   if a:findstart
     let cur_col = getpos('.')[2] - 1
     let line = getline(line('.'))
-    while line[cur_col-1] =~? '\v^[a-z]$' "&& cur_col > 0
+    while line[cur_col-1] =~? '\v^[a-z]$' && cur_col > 0
       let cur_col -= 1
     endwhile
     return cur_col
