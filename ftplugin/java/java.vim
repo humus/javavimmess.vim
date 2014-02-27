@@ -11,6 +11,8 @@ let g:dict_javavim = {}
 let s:let_sid = 'map <Plug>jsid <SID>|let s:sid=matchstr(maparg("<Plug>jsid"), "\\d\\+_")|unmap <Plug>jsid'
 exe s:let_sid
 
+let s:completion_dict = {}
+
 let s:method_def_expr =
 \ '\v^%(\t|    )%((private |protected |public )%((public|private|protected)@!))?[[:alnum:]]+(\<.+\>)?[[:space:]\n]{1,}[[:alnum:]\$_]+\s{-}\('
 let s:method_bodystart_expr = '\v\{'
@@ -422,6 +424,7 @@ fun! Javapcword() "{{{
   endif
   let word = expand('<cword>')
   let word = substitute(word, '\v\$', '\\$', 'g')
+
   let dirs = s:calculate_dirs()
   try
     exe "lcd " . dirs.project_dir
@@ -523,6 +526,18 @@ fun! CreateAutoImportWindow(back_to_insert_mode) "{{{
   endtry
 endfunction "}}}
 
+fun! s:find_type_from_var_or_type(type_or_var) "{{{
+    " Word under cursor is a variable
+    " the totally weird cur_word[1]=='$' is because '$' has to be escaped
+    if a:type_or_var =~# '\v^[a-z]' || a:type_or_var[1] == '$'
+      let l:var_type = s:find_variable_type(a:type_or_var)
+    else
+    " Word under cursor is a Class/Interface
+      let l:var_type = a:type_or_var
+    endif
+    return l:var_type
+endfunction "}}}
+
 fun! CreateDescribeWindow() "{{{
   let working_window = bufwinnr('%')
   let dirs = s:calculate_dirs()
@@ -532,23 +547,13 @@ fun! CreateDescribeWindow() "{{{
     if cur_word == ''
       return
     endif
-    " Word under cursor is a variable
-    " the totally weird cur_word[1]=='$' is because '$' has to be escaped
-    if cur_word =~# '\v^[a-z]' || cur_word[1] == '$'
-      let var_type = s:find_variable_type(cur_word)
-    else
-    " Word under cursor is a Class/Interface
-      let var_type = cur_word
-    endif
+    let var_type = s:find_variable_type(cur_word)
     let full_class_name = FindClassType(var_type)
     keepalt bot new
     exe 'silent f describe\ ' . full_class_name
     let lines = s:exec_javap(full_class_name, 0)
-    call filter(lines, 'v:val=~ ''\v^[[:space:]]+''')
-    call map(lines, 'substitute(v:val, ''\v^\s+public\s+'', '''', '''')')
-    call map(lines, 'substitute(v:val, ''\vjava\.lang\.'', '''', ''g'')')
-    call map(lines, 'substitute(v:val, ''\v(\w+\.)+\ze\w+\W'', '''', '''')')
-    call map(lines, 'substitute(v:val, ''\vstatic final\s+'', '''', '''')')
+    let lines = s:format_javap_output(lines)
+    call map(a:lines, 'substitute(v:val, ''\vstatic final\s+'', '''', '''')')
     call setline(1, lines[0])
     let line_num = 1
     for line in lines[1:]
@@ -558,6 +563,15 @@ fun! CreateDescribeWindow() "{{{
   finally
     exe "lcd " . dirs.cwd_dir
   endtry
+endfunction "}}}
+
+fun! s:format_javap_output(lines) "{{{
+    call filter(a:lines, 'v:val=~ ''\v^[[:space:]]+''')
+    call map(a:lines, 'substitute(v:val, ''\v^\s+public\s+'', '''', '''')')
+    call map(a:lines, 'substitute(v:val, ''\vjava\.lang\.'', '''', ''g'')')
+    call map(a:lines, 'substitute(v:val, ''\v(\w+\.)+\ze\w+\W'', '''', '''')')
+    call map(a:lines, 'substitute(v:val, ''\v<final>\s'', '''', '''')')
+    return a:lines
 endfunction "}}}
 
 fun! s:get_cword_or_blank() "{{{
@@ -574,18 +588,35 @@ fun! s:get_cword_or_blank() "{{{
   return substitute(cur_line[first_col : last_col], '\v\$', '\\$', 'g') | " yes, have to escape dollar sign
 endfunction "}}}
 
-fun! s:find_last_word_column(column) "{{{
+fun! s:find_last_word_column(column, ...) "{{{
+  let l:search_expr = '\v[^[:alnum:]\$_]'
+  if len(a:000) > 0 && a:1
+    let l:search_expr = '\v[^[:alnum:]\$_.]'
+  endif
+
   let cur_line = getline(line('.'))
-  if cur_line[a:column] =~ '\v[^[:alnum:]\$_]'
+  if cur_line[a:column] =~ l:search_expr
+        \ ||   a:column >= len(cur_line)
     return a:column - 1
+  endif
+  if len(a:000) > 0 && a:1
+    return s:find_last_word_column(a:column + 1, a:1)
   endif
   return s:find_last_word_column(a:column + 1)
 endfunction "}}}
 
-fun! s:find_first_word_column(column) "{{{
+fun! s:find_first_word_column(column, ...) "{{{
+  let l:search_expr = '\v[^[:alnum:]\$_]'
+  if len(a:000) > 0 && a:1
+    let l:search_expr = '\v[^[:alnum:]\$_.]'
+  endif
+
   let cur_line = getline(line('.'))
-  if cur_line[a:column] =~ '\v[^[:alnum:]\$_]'
+  if cur_line[a:column] =~ l:search_expr
     return a:column + 1
+  endif
+  if len(a:000) > 0 && a:1
+    return s:find_first_word_column(a:column - 1, a:1)
   endif
   return s:find_first_word_column(a:column - 1)
 endfunction "}}}
@@ -780,12 +811,88 @@ fun! s:SwitchToTest() "{{{
     silent! execute 'e ' . test_file
 endfunction "}}}
 
+fun! s:prepare_completion() "{{{
+  "Should I have to implement something like this?
+  "augroup java_complete | au! | au InsertLeave % pclose | \ set cfu= | "augroup END
+
+  let col = getpos('.')[2] - 1
+  let last_col = s:find_last_word_column(col, 1)
+  let first_col = s:find_first_word_column(col, 1)
+  let complete_expr = getline(line('.'))[first_col : last_col]
+
+  if complete_expr !~ '\v\.'
+    return " \<BS>"
+  endif
+
+  let var_name = matchstr(complete_expr, '\v.+\ze\.')
+  let var_name = substitute(var_name, '\v\$', '\\&', 'g')
+
+  let dirs = s:calculate_dirs()
+  exe "lcd " . dirs.project_dir
+  try
+    if var_name =~# '\v^[a-z]' || var_name[1] == '$'
+      let l:var_type = s:find_variable_type(var_name)
+    else
+      let l:var_type = var_name
+    endif
+    let full_class_name = FindClassType(var_type)
+  finally
+    exe 'lcd ' . dirs.cwd_dir
+  endtry
+
+  let l:lines = s:exec_javap(full_class_name, 0)
+  let l:lines = s:format_javap_output(l:lines)
+
+  let l:lines = s:prefilter_static(var_name, l:lines)
+  let l:lines = s:filter_for_completion(l:var_type, l:lines)
+  let s:completion_dict.lines = l:lines
+  "this weird stuff is just to support '$' in variable names
+  let s:completion_dict.col_start = first_col + 1 
+        \ + len(substitute(var_name, '\\', '', 'g'))
+
+  set cfu=Complete_Java_Fun
+
+  return "\<C-x>\<C-u>"
+endfunction "}}}
+
+fun! s:filter_for_completion(var_type, lines) "{{{
+  "format lines starting with static
+  call map(a:lines, 'substitute(v:val, ''^\v<static>\s'', '''', '''')')
+  "filter constructor
+  call filter(a:lines, 'v:val !~# ''\v^' . a:var_type . '\(''')
+  call map(a:lines, 'substitute(v:val, ''^\v.{-}\s\ze.*'', '''', '''')')
+  call map(a:lines, 'substitute(v:val, '';'', '''', '''')')
+  return a:lines
+endfunction "}}}
+
+fun! Complete_Java_Fun(findstart, base) "{{{
+  if a:findstart
+    let cur_col = getpos('.')[2] - 1
+    let line = getline(line('.'))
+    while line[cur_col-1] =~? '\v^[a-z]$' "&& cur_col > 0
+      let cur_col -= 1
+    endwhile
+    return cur_col
+  endif
+  let l:sexpr = '\v^' . a:base
+  return filter(copy(s:completion_dict.lines), 'v:val =~? ''' . l:sexpr . '''')
+endfunction "}}}
+
+fun! s:prefilter_static(var_name, lines) "{{{
+  let l:lines = a:lines
+  if a:var_name =~# '\v^[A-Z].*'
+    let l:lines = filter(l:lines, 'v:val =~ ''\v\s*static''')
+  endif
+  let l:lines = map(l:lines, 'substitute(v:val, ''\vstatic\s+|final\s+'', '''', ''g'')')
+  return l:lines
+endfunction "}}}
+
 augroup command_on_save
   au!
   au BufWritePost *.java call CompileOnSave()
 augroup END
 
-"Not totally sure a dictionary is well suited for this behavior
+"Not totally sure if dictionary is well suited for this behavior
 let g:dict_javavim['methoddef'] = function('<SNR>' . s:sid . 'get_method_def')
 let g:dict_javavim['strip_parens'] = function('<SNR>' . s:sid . 'strip_parens')
 let g:dict_javavim['strip_to_plain_params'] = function('<SNR>' . s:sid . 'strip_to_plain_params')
@@ -806,3 +913,6 @@ inoremap <silent><buffer> <C-g><C-p> <Esc>:call CreateAutoImportWindow(1)<cr>
 inoremap <silent><buffer> <C-g>p <Esc>:call CreateAutoImportWindow(1)<cr>
 nnoremap <silent><buffer> <C-g><C-p> :call CreateAutoImportWindow(0)<cr>
 nnoremap <silent><buffer> <C-g>p :call CreateAutoImportWindow(0)<cr>
+inoremap <silent><buffer> <expr> <C-g><C-n> <SID>prepare_completion()
+
+
