@@ -854,8 +854,9 @@ fun! s:prepare_completion() "{{{
   let s:completion_dict.col_start = first_col + 1 
         \ + len(substitute(var_name, '\\', '', 'g'))
 
-  set cfu=Complete_Java_Fun
+  let cur_len = len(getline(line('.')))
 
+  set cfu=Complete_Java_Fun
   return "\<C-x>\<C-u>"
 endfunction "}}}
 
@@ -901,6 +902,30 @@ let g:dict_javavim['methoddef'] = function('<SNR>' . s:sid . 'get_method_def')
 let g:dict_javavim['strip_parens'] = function('<SNR>' . s:sid . 'strip_parens')
 let g:dict_javavim['strip_to_plain_params'] = function('<SNR>' . s:sid . 'strip_to_plain_params')
 let g:dict_javavim['def_variables_method'] = function('<SNR>' . s:sid . 'return_def_variables')
+
+fun! s:autowrite_type_var() "{{{
+  let l:pos = getpos('.')
+  let l:col_ = s:find_first_word_column(l:pos[2]-3, 0)
+  let l:candidate = getline(line('.'))[col_ :l:pos[2]-1]
+  let l:needs_space = l:candidate =~ '\s$' ? 0 : 1
+  if l:candidate =~# '^[A-Z]'
+    let l:ret_val = (l:needs_space ? ' ' : '') .
+          \ substitute(l:candidate, '^\w', '\l&', '')
+  else
+    let l:ret_val = repeat("\<BS>", len(l:candidate))
+    let l:ret_val .= substitute(l:candidate, '^\w', '\u&', '')
+    if l:needs_space
+      let l:ret_val .= ' '
+    endif
+    let l:ret_val .= l:candidate
+  endif
+  return l:ret_val
+endfunction "}}}
+
+
+
+inoremap <expr> <C-g><C-e> <SID>autowrite_type_var()
+inoremap <expr> <C-g>e     <SID>autowrite_type_var()
 
 nnoremap g5 :call CreateDescribeWindow()<CR>
 
