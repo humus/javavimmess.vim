@@ -220,8 +220,6 @@ fun! s:sort_file_index_cd() "{{{
   exe 'lcd ' . dirs.cwd_dir
 endfunction "}}}
 
-command! FileIndexSort call s:sort_file_index_cd()
-
 fun! List_classes_cache() "{{{
   let dirs = s:calculate_dirs()
   exe "lcd " . dirs.project_dir
@@ -818,10 +816,21 @@ fun! s:SwitchToTest() "{{{
     silent! execute 'e ' . test_file
 endfunction "}}}
 
-fun! s:clear_autocmds_insert_leave() "{{{
+fun! s:clear_autocmds_java_complete() "{{{
   augroup java_complete
     au!
   augroup END
+endfunction "}}}
+
+fun! s:manage_cursor_after_complete() "{{{
+  let possible_paren = getline(line('.'))[getpos('.')[2] - 2]
+  let ret_expr = "\<CR>"
+  if pumvisible() && possible_paren =~ '\v\)'
+    let ret_expr = "\<C-Y>\<Left>"
+  elseif pumvisible()
+    let ret_expr = "\<C-Y>"
+  endif
+  return ret_expr
 endfunction "}}}
 
 fun! s:prepare_completion() "{{{
@@ -830,9 +839,11 @@ fun! s:prepare_completion() "{{{
     au! 
     au InsertLeave *.java pclose 
     au InsertLeave *.java set cfu=
-    au InsertLeave *.java set cfu=
-    au InsertLeave *.java call s:clear_autocmds_insert_leave()
+    au InsertLeave *.java silent! iunmap <buffer> <cr>
+    au InsertLeave *.java call s:clear_autocmds_java_complete()
   augroup END
+
+  inoremap <buffer> <expr> <cr> <SID>manage_cursor_after_complete()
 
   let col = getpos('.')[2] - 1
   let last_col = s:find_last_word_column(col, 1)
@@ -881,10 +892,10 @@ fun! s:format_dict(lines) "{{{
   "let l:lines = map(copy(a:lines), 'substitute(v:val, ''\v(.*'', '''', '''')')
   let l:completion = []
   for l:l in a:lines
-    let l:word = substitute(l:l, '\v\(.{-}\)', '', '')
+    let l:word = substitute(l:l, '\v\(\zs.{-}\ze\)', '', '')
     let l:menu = matchstr(l:l, '\v(\(.*\))', '\1')
-    let l:info = l:word . l:menu
-    if l:info =~ '\v.+\(\s*\)$' | let l:info = ' ' | endif
+    let l:info = l:word[:-3] . l:menu
+    if l:info =~ '\v.+\(\s*\)$' | let l:info = '' | endif
     let complete_item = {'word': l:word,
           \ 'menu': l:menu,
           \ 'info': l:info,
