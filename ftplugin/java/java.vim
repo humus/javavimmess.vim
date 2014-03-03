@@ -19,7 +19,8 @@ let s:method_bodystart_expr = '\v\{'
 
 fun! CacheThisMavenProj() abort "{{{
   let adir = fnamemodify(findfile('pom.xml', '.;'), ':h')
-  if adir == '' | let adir = './' | endif
+  if adir =~ '\v^$' | let adir = '.' | endif
+  if adir !~ '\v/$' | let adir .= '/' | endif
   let cmd_height = &cmdheight
   set cmdheight=3
   let is_regenerated = s:prompt_regenerate_cache(adir)
@@ -48,10 +49,11 @@ fun! s:prompt_regenerate_cache(adir) "{{{
 endfunction "}}}
 
 fun! s:delete_dir(a_dir) "{{{
+  let l:dir = s:normalize_command(a:a_dir)
   if has('win32')
-    call system('rd /q /s ' . a:a_dir)
+    call system('rd /q /s ' . l:dir)
   else
-    call system('rm -rf ' . a:a_dir)
+    call system('rm -rf ' . l:dir)
   endif
 endfunction "}}}
 
@@ -215,7 +217,7 @@ fun! s:sort_file_index_cd() "{{{
   exe 'lcd ' . dirs.project_dir
   lcd .cache
   call s:extract_class_names()
-  exe 'lcd ' . dirs.cwd_
+  exe 'lcd ' . dirs.cwd_dir
 endfunction "}}}
 
 command! FileIndexSort call s:sort_file_index_cd()
@@ -281,7 +283,8 @@ endfunction "}}}
 
 fun! s:normalize_command(command) "{{{
   if has('win32')
-    return substitute(a:command, '\v(-g|C)@<!:', ';', 'g')
+    return substitute(substitute(a:command, '\v(-g|C)@<!:', ';', 'g')
+          \ , '\v/', '\\', 'g')
   endif
   return a:command
 endfunction "}}}
@@ -345,7 +348,7 @@ fun! s:javap_current() "{{{
   let dirs = s:calculate_dirs()
   exe 'lcd ' . dirs.project_dir
   try
-    let lines = s:exec_javap(s:current_clazz(), 0)
+    let lines = s:exec_javap(s:current_clazz(), 1)
     for l in lines | echom l | endfor
   finally
     exe 'lcd ' . dirs.cwd_dir
@@ -815,9 +818,21 @@ fun! s:SwitchToTest() "{{{
     silent! execute 'e ' . test_file
 endfunction "}}}
 
+fun! s:clear_autocmds_insert_leave() "{{{
+  augroup java_complete
+    au!
+  augroup END
+endfunction "}}}
+
 fun! s:prepare_completion() "{{{
   "Should I have to implement something like this?
-  "augroup java_complete | au! | au InsertLeave % pclose | \ set cfu= | "augroup END
+  augroup java_complete 
+    au! 
+    au InsertLeave *.java pclose 
+    au InsertLeave *.java set cfu=
+    au InsertLeave *.java set cfu=
+    au InsertLeave *.java call s:clear_autocmds_insert_leave()
+  augroup END
 
   let col = getpos('.')[2] - 1
   let last_col = s:find_last_word_column(col, 1)
@@ -849,7 +864,8 @@ fun! s:prepare_completion() "{{{
 
   let l:lines = s:prefilter_static(var_name, l:lines)
   let l:lines = s:filter_for_completion(l:var_type, l:lines)
-  let s:completion_dict.lines = l:lines
+  let l:completions = s:format_dict(l:lines)
+  let s:completion_dict.lines = l:completions
   "this weird stuff is just to support '$' in variable names
   let s:completion_dict.col_start = first_col + 1 
         \ + len(substitute(var_name, '\\', '', 'g'))
@@ -858,6 +874,25 @@ fun! s:prepare_completion() "{{{
 
   set cfu=Complete_Java_Fun
   return "\<C-x>\<C-u>"
+endfunction "}}}
+
+fun! s:format_dict(lines) "{{{
+  "{word, abbr, menu, info, kind, icase, dup}
+  "let l:lines = map(copy(a:lines), 'substitute(v:val, ''\v(.*'', '''', '''')')
+  let l:completion = []
+  for l:l in a:lines
+    let l:word = substitute(l:l, '\v\(.{-}\)', '', '')
+    let l:menu = matchstr(l:l, '\v(\(.*\))', '\1')
+    let l:info = l:word . l:menu
+    if l:info =~ '\v.+\(\s*\)$' | let l:info = ' ' | endif
+    let complete_item = {'word': l:word,
+          \ 'menu': l:menu,
+          \ 'info': l:info,
+          \ 'icase': 1,
+          \ 'dup': 1}
+    call add(l:completion, complete_item)
+  endfor
+  return l:completion
 endfunction "}}}
 
 fun! s:filter_for_completion(var_type, lines) "{{{
@@ -880,7 +915,7 @@ fun! Complete_Java_Fun(findstart, base) "{{{
     return cur_col
   endif
   let l:sexpr = '\v^' . a:base
-  return filter(copy(s:completion_dict.lines), 'v:val =~? ''' . l:sexpr . '''')
+  return filter(copy(s:completion_dict.lines), 'v:val["word"] =~? ''' . l:sexpr . '''')
 endfunction "}}}
 
 fun! s:prefilter_static(var_name, lines) "{{{
