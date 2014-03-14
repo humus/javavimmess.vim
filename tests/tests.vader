@@ -1,0 +1,39 @@
+Before:
+  set ft=java
+  let jsid=VimJMessSID()
+  let ApplyFun=function('<SNR>'.jsid.'apply_substitutions')
+  let FormatDictFun=function('<SNR>'.jsid.'format_dict')
+  let FormatJavapOutput=function('<SNR>'.jsid.'format_javap_output')
+Given:
+Execute:
+  call setline(1, ApplyFun('abstract void error(String, Throwable)'))
+Expect:
+  error(String, Throwable)
+Given:
+Execute:
+  call setline(1, ApplyFun('public org.springframework.test.web.servlet.ResultActions perform(org.springframework.test.web.servlet.RequestBuilder)       throws java.lang.Exception;'))
+Expect:
+  org.springframework.test.web.servlet.ResultActions perform(org.springframework.test.web.servlet.RequestBuilder)       throws java.lang.Exception
+Given:
+Execute:
+  let dict_ = FormatDictFun(['error(java.lang.String, java.lang.Throwable)'])[0]
+  call setline(1, dict_['word'])
+Expect:
+  error()
+Given:
+Execute:
+  let dict_ = FormatDictFun(['perform(org.springframework.test.web.servlet.RequestBuilder)       throws java.lang.Exception;'])[0]
+  call setline(1, dict_['word'])
+Expect:
+  perform()
+Given:
+Execute:
+  let lines=
+    \ ['public final class org.springframework.test.web.servlet.MockMvc extends java.lang.Object{',
+    \  '    public org.springframework.test.web.servlet.ResultActions perform(org.springframework.test.web.servlet.RequestBuilder)       throws java.lang.Exception;',
+    \  '}']
+  let lines=FormatJavapOutput(lines) 
+  for l in lines | call append(line('$'), l) | endfor
+  normal ggdd
+Expect:
+  ResultActions perform(org.springframework.test.web.servlet.RequestBuilder)       throws Exception;
