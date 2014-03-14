@@ -61,9 +61,12 @@ fun! s:populate_cache(a_dir) abort "{{{
   call mkdir(a:a_dir . '.cache', 'p')
   let cwd_ = getcwd()
   exe "cd " . a:a_dir
-  let paths = s:parse_mvn_output()
-  call s:copy_files_to_cache(paths)
-  exe "cd " . cwd_
+  try
+    let paths = s:parse_mvn_output()
+    call s:copy_files_to_cache(paths)
+  finally
+    exe "cd " . cwd_
+  endtry
 endfunction "}}}
 
 fun! s:parse_mvn_output() "{{{
@@ -256,10 +259,10 @@ fun! s:createclassesdirs() "{{{
   endif
 endfunction "}}}
 
-fun! JavaCBuffer() "{{{
+fun! JavacBuffer() "{{{
   let dirs = s:calculate_dirs()
   let javac = s:javac_core_command
-  if expand('%:t') =~ '\vTest|It'
+  if expand('%:t') =~# '\vTest|IT'
     let javac = s:javac_test_command
   endif
   try
@@ -294,7 +297,7 @@ endfunction "}}}
 
 fun! CompileOnSave() "{{{
   if &ft == 'java' && b:is_compile_on_save
-    JavaC
+    Javac
   endif
 endfunction "}}}
 
@@ -407,41 +410,13 @@ endfunction "}}}
 
 fun! s:findDeclaredTypeInJavapOutput(var) abort "{{{
   let javap_output = s:exec_javap(s:current_clazz(), 1)
-  let vars = filter(copy(javap_output), 'v:val =~ ''\v' . a:var . ';$''')
+  let vars = filter(copy(javap_output), 'v:val =~ ''\v<' . a:var . ';$''')
   call map(vars, 'matchstr(v:val, ''\v^.+\.\zs\S+\ze\s+[\$_[:alnum:]]+;$'')')
   if empty(vars)
     return ''
   else
     return vars[0]
   endif
-endfunction "}}}
-
-" This method was sort of a spike and would be deleted
-fun! Javapcword() "{{{
-  let cur_line = getline(line('.'))
-  let cur_col = col('.')
-  if cur_line[cur_col - 1] !~ '\w' "Not on cword
-    echohl WarningMsg | echom 'NOT ON <cword>' | echohl None
-  endif
-  let word = expand('<cword>')
-  let word = substitute(word, '\v\$', '\\$', 'g')
-
-  let dirs = s:calculate_dirs()
-  try
-    exe "lcd " . dirs.project_dir
-    let type = s:findDeclaredTypeInMethod(word)
-    if type == ''
-      let type = s:findDeclaredTypeInJavapOutput(word)
-    endif
-    if type == ''
-      let type = FindDeclaredType(word)
-    endif
-    let clazz = FindClassType(type)
-    let lines = split(system(s:normalize_command(s:javap_exec . ' ' . clazz)), '\v\n')
-    for l in lines | echom l | endfor
-  finally
-    exe "lcd " . dirs.cwd_dir
-  endtry
 endfunction "}}}
 
 " When the word under cursor is a Variable this method is used
@@ -491,9 +466,27 @@ function! s:delete_current_class_file(base)
 endfunction
 
 fun! FindClassType(clazz) "{{{
+  "Obtain current clazz and package to check if this is a test class
+  let l:cur_class = s:current_clazz()
+  let l:cur_package = matchstr(l:cur_class, '\v^.+\ze\.\w+$')
+  let l:cur_class = matchstr(l:cur_class, '\v^.+\.\zs\S+$')
+  if l:cur_class =~# a:clazz . 'Test'
+    "When it is a test class must check before
+    "if class under test is in the same package
+    let l:clazz_type = l:cur_package . '.' . a:clazz
+    if s:source_of_clazz_exists(l:clazz_type)
+      return l:clazz_type
+    endif
+  endif
   let line_import = FindImport(a:clazz)
-  let clazz = matchstr(getline(line_import), '\v^import\s+\zs.*\ze\W')
-  return clazz
+  return matchstr(getline(line_import), '\v^import\s+\zs.*\ze\W')
+endfunction "}}}
+
+fun! s:source_of_clazz_exists(clazz_type) "{{{
+  let path = 'src/main/java/'
+  let more_on_path = substitute(a:clazz_type, '\v\.', '/', 'g')
+  let path .= more_on_path . '.java'
+  return filereadable(path)
 endfunction "}}}
 
 fun! FindImport(clazz) "{{{
@@ -501,7 +494,6 @@ fun! FindImport(clazz) "{{{
   let expression = '\v^import .+<' . a_class . ';'
 
   let _pos = searchpos(expression, 'bn')[0]
-
   if _pos == 0
     throw 'Type could not be determined'
   endif
@@ -515,7 +507,7 @@ fun! CreateAutoImportWindow(back_to_insert_mode) "{{{
   exe 'lcd ' . dirs.project_dir
   try
     let search_term = expand('<cword>')
-    keepalt bot new
+    keepalt bel new
     silent f auto\ import\ list
     setlocal buftype=nowrite bufhidden=wipe nobuflisted noswapfile number
     setlocal nonu
@@ -554,7 +546,7 @@ fun! CreateDescribeWindow() "{{{
       let var_type = cur_word
     endif
     let full_class_name = FindClassType(var_type)
-    keepalt bot new
+    keepalt bel new
     exe 'silent f describe\ ' . full_class_name
     let lines = s:exec_javap(full_class_name, 0)
     let lines = s:format_javap_output(lines)
@@ -571,12 +563,12 @@ fun! CreateDescribeWindow() "{{{
 endfunction "}}}
 
 fun! s:format_javap_output(lines) "{{{
-    call filter(a:lines, 'v:val=~ ''\v^[[:space:]]+''')
-    call map(a:lines, 'substitute(v:val, ''\v^\s+public\s+'', '''', '''')')
-    call map(a:lines, 'substitute(v:val, ''\vjava\.lang\.'', '''', ''g'')')
-    call map(a:lines, 'substitute(v:val, ''\v(\w+\.)+\ze\w+\W'', '''', '''')')
-    call map(a:lines, 'substitute(v:val, ''\v<final>\s'', '''', '''')')
-    return a:lines
+  call filter(a:lines, 'v:val=~''\v^[[:space:]]+''')
+  call map(a:lines, 'substitute(v:val, ''\v^\s+public\s+'', '''', '''')')
+  call map(a:lines, 'substitute(v:val, ''\vjava\.lang\.'', '''', ''g'')')
+  call map(a:lines, 'substitute(v:val, ''\v(\w+\.)+\ze\w+\W'', '''', '''')')
+  call map(a:lines, 'substitute(v:val, ''\v<final>\s'', '''', '''')')
+  return a:lines
 endfunction "}}}
 
 fun! s:get_cword_or_blank() "{{{
@@ -837,17 +829,19 @@ fun! s:prepare_completion() "{{{
   "Should I have to implement something like this?
   augroup java_complete 
     au! 
-    au InsertLeave *.java pclose 
+    au InsertLeave *.java pclose
     au InsertLeave *.java set cfu=
     au InsertLeave *.java silent! iunmap <buffer> <cr>
+    au InsertLeave *.java silent! iunmap <buffer> <tab>
     au InsertLeave *.java call s:clear_autocmds_java_complete()
   augroup END
 
   inoremap <buffer> <expr> <cr> <SID>manage_cursor_after_complete()
+  inoremap <buffer> <expr> <tab> <SID>manage_cursor_after_complete()
 
   let col = getpos('.')[2] - 1
   let last_col = s:find_last_word_column(col, 1)
-  let first_col = s:find_first_word_column(col, 1)
+  let first_col = s:find_first_word_column(col-1, 1)
   let complete_expr = getline(line('.'))[first_col : last_col]
 
   if complete_expr !~ '\v\.'
@@ -866,22 +860,20 @@ fun! s:prepare_completion() "{{{
       let l:var_type = var_name
     endif
     let full_class_name = FindClassType(var_type)
+
+    let l:lines = s:exec_javap(full_class_name, 0)
+    let l:lines = s:format_javap_output(l:lines)
+    let l:lines = s:prefilter_static(var_name, l:lines)
+    let l:lines = s:filter_for_completion(l:var_type, l:lines)
+    let l:completions = s:format_dict(l:lines)
+    let s:completion_dict.lines = l:completions
+    "this weird stuff is just to support '$' in variable names
+    let s:completion_dict.col_start = first_col + 1 
+          \ + len(substitute(var_name, '\\', '', 'g'))
+
   finally
     exe 'lcd ' . dirs.cwd_dir
   endtry
-
-  let l:lines = s:exec_javap(full_class_name, 0)
-  let l:lines = s:format_javap_output(l:lines)
-
-  let l:lines = s:prefilter_static(var_name, l:lines)
-  let l:lines = s:filter_for_completion(l:var_type, l:lines)
-  let l:completions = s:format_dict(l:lines)
-  let s:completion_dict.lines = l:completions
-  "this weird stuff is just to support '$' in variable names
-  let s:completion_dict.col_start = first_col + 1 
-        \ + len(substitute(var_name, '\\', '', 'g'))
-
-  let cur_len = len(getline(line('.')))
 
   set cfu=Complete_Java_Fun
   return "\<C-x>\<C-u>"
@@ -889,13 +881,14 @@ endfunction "}}}
 
 fun! s:format_dict(lines) "{{{
   "{word, abbr, menu, info, kind, icase, dup}
-  "let l:lines = map(copy(a:lines), 'substitute(v:val, ''\v(.*'', '''', '''')')
   let l:completion = []
   for l:l in a:lines
     let l:word = substitute(l:l, '\v\(\zs.{-}\ze\)', '', '')
+    let l:word = substitute(l:word, '\v\s*throws .*$', '', '')
     let l:menu = matchstr(l:l, '\v(\(.*\))', '\1')
     let l:info = l:word[:-3] . l:menu
-    if l:info =~ '\v.+\(\s*\)$' | let l:info = '' | endif
+    let l:info .= matchstr(l:l, '\v(\s*throws\s+.*)?$')
+    if l:info =~ '\v.+\(\s*\)\s*$' | let l:info = '' | endif
     let complete_item = {'word': l:word,
           \ 'menu': l:menu,
           \ 'info': l:info,
@@ -911,9 +904,17 @@ fun! s:filter_for_completion(var_type, lines) "{{{
   call map(a:lines, 'substitute(v:val, ''^\v<static>\s'', '''', '''')')
   "filter constructor
   call filter(a:lines, 'v:val !~# ''\v^' . a:var_type . '\(''')
-  call map(a:lines, 'substitute(v:val, ''^\v.{-}\s\ze.*'', '''', '''')')
-  call map(a:lines, 'substitute(v:val, '';'', '''', '''')')
+  call map(a:lines, '<SNR>'.s:sid.'apply_substitutions(v:val)')
   return a:lines
+endfunction "}}}
+
+fun! s:apply_substitutions(line) "{{{
+  "format lines starting with static
+  let l:line = substitute(a:line, '\v^<static>\s', '', '')
+  let l:line = substitute(l:line, '\vabstract\s', '', '')
+  let l:line = substitute(l:line, '\v^.{-}\s\ze.*', '', '') "to remove public keyword
+  let l:line = substitute(l:line, ';', '', '')
+  return l:line
 endfunction "}}}
 
 fun! Complete_Java_Fun(findstart, base) "{{{
@@ -952,7 +953,7 @@ let g:dict_javavim['def_variables_method'] = function('<SNR>' . s:sid . 'return_
 fun! s:autowrite_type_var() "{{{
   let l:pos = getpos('.')
   let l:col_ = s:find_first_word_column(l:pos[2]-3, 0)
-  let l:candidate = getline(line('.'))[col_ :l:pos[2]-1]
+  let l:candidate = getline(line('.'))[col_ : l:pos[2]-1]
   let l:needs_space = l:candidate =~ '\s$' ? 0 : 1
   if l:candidate =~# '^[A-Z]'
     let l:ret_val = (l:needs_space ? ' ' : '') .
@@ -968,10 +969,26 @@ fun! s:autowrite_type_var() "{{{
   return l:ret_val
 endfunction "}}}
 
+fun! s:autowrite_new_from_var() "{{{
+  let l:pos = getpos('.')
+  let l:col_ = s:find_first_word_column(l:pos[2]-3, 0)
+  let l:candidate = getline(line('.'))[col_ : l:pos[2]-1]
+  if l:candidate =~# '^[a-z]'
+    let l:space_or_blank = l:candidate =~ '\s$' ? '' : ' '
+    let l:ret_val = l:space_or_blank . "= new "
+          \ . substitute(l:candidate, '^\w', '\u&', '')
+          \ . "();\<Left>\<Left>"
+  else
+    let l:ret_val = " \<BS>"
+  endif
+  return l:ret_val
+endfunction "}}}
+
 
 
 inoremap <expr> <C-g><C-e> <SID>autowrite_type_var()
 inoremap <expr> <C-g>e     <SID>autowrite_type_var()
+inoremap <expr> <C-g>E     <SID>autowrite_new_from_var()
 
 nnoremap g5 :call CreateDescribeWindow()<CR>
 
@@ -979,9 +996,9 @@ command! -buffer CompileOnSaveToggle call ToggleSettingCompileOnSave()
 command! -buffer CacheCurrProjMaven call CacheThisMavenProj()
 command! -buffer CreateIndex call CacheThisMavenProj() | call List_classes_cache()
 command! -buffer IndexCache call List_classes_cache()
-command! -buffer JavaC call JavaCBuffer()
-command! -buffer Junit call JUnitCurrent()
-command! -buffer Javap call Javapcword()
+command! -bar -buffer Javac call JavacBuffer()
+command! -bar -buffer Junit call JUnitCurrent()
+command! -bar -buffer Javap call Javapcword()
 command! -buffer A call s:Alternate()
 nnoremap <silent><buffer> g7 :call <SID>javap_current()<cr>
 inoremap <silent><buffer> <C-g><C-p> <Esc>:call CreateAutoImportWindow(1)<cr>
@@ -990,4 +1007,6 @@ nnoremap <silent><buffer> <C-g><C-p> :call CreateAutoImportWindow(0)<cr>
 nnoremap <silent><buffer> <C-g>p :call CreateAutoImportWindow(0)<cr>
 inoremap <silent><buffer> <expr> <C-g><C-n> <SID>prepare_completion()
 
-
+fun! VimJMessSID() "{{{
+  return s:sid
+endfunction "}}}
