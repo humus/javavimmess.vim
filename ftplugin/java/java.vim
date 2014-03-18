@@ -566,7 +566,6 @@ fun! s:format_javap_output(lines) "{{{
   call filter(a:lines, 'v:val=~''\v^[[:space:]]+''')
   call map(a:lines, 'substitute(v:val, ''\v^\s+public\s+'', '''', '''')')
   call map(a:lines, 'substitute(v:val, ''\vjava\.lang\.'', '''', ''g'')')
-  call map(a:lines, 'substitute(v:val, ''\v(\w+\.)+\ze\w+\W'', '''', '''')')
   call map(a:lines, 'substitute(v:val, ''\v<final>\s'', '''', '''')')
   return a:lines
 endfunction "}}}
@@ -582,7 +581,8 @@ fun! s:get_cword_or_blank() "{{{
   let last_col = s:find_last_word_column(column + 1)
   let first_col = s:find_first_word_column(column - 1)
 
-  return substitute(cur_line[first_col : last_col], '\v\$', '\\$', 'g') | " yes, have to escape dollar sign
+  return substitute(cur_line[first_col : last_col],
+        \ '\v\$', '\\$', 'g') | " yes, have to escape dollar sign
 endfunction "}}}
 
 fun! s:find_last_word_column(column, ...) "{{{
@@ -609,7 +609,7 @@ fun! s:find_first_word_column(column, ...) "{{{
   endif
 
   let cur_line = getline(line('.'))
-  if cur_line[a:column] =~ l:search_expr
+  if cur_line[a:column] =~ l:search_expr || a:column < 0
     return a:column + 1
   endif
   if len(a:000) > 0 && a:1
@@ -944,6 +944,9 @@ augroup command_on_save
   au BufWritePost *.java call CompileOnSave()
 augroup END
 
+fun! s:jmess_sid() dict "{{{
+  echo s:sid . '	<-----'
+endfunction "}}}
 "Not totally sure if dictionary is well suited for this behavior
 let g:dict_javavim['methoddef'] = function('<SNR>' . s:sid . 'get_method_def')
 let g:dict_javavim['strip_parens'] = function('<SNR>' . s:sid . 'strip_parens')
@@ -984,7 +987,9 @@ fun! s:autowrite_new_from_var() "{{{
   return l:ret_val
 endfunction "}}}
 
-
+fun! VimJMessSID() "{{{
+  return s:sid
+endfunction "}}}
 
 inoremap <expr> <C-g><C-e> <SID>autowrite_type_var()
 inoremap <expr> <C-g>e     <SID>autowrite_type_var()
@@ -992,6 +997,7 @@ inoremap <expr> <C-g>E     <SID>autowrite_new_from_var()
 
 nnoremap g5 :call CreateDescribeWindow()<CR>
 
+command! FileIndexSort call s:sort_file_index_cd()
 command! -buffer CompileOnSaveToggle call ToggleSettingCompileOnSave()
 command! -buffer CacheCurrProjMaven call CacheThisMavenProj()
 command! -buffer CreateIndex call CacheThisMavenProj() | call List_classes_cache()
@@ -1001,12 +1007,8 @@ command! -bar -buffer Junit call JUnitCurrent()
 command! -bar -buffer Javap call Javapcword()
 command! -buffer A call s:Alternate()
 nnoremap <silent><buffer> g7 :call <SID>javap_current()<cr>
-inoremap <silent><buffer> <C-g><C-p> <Esc>:call CreateAutoImportWindow(1)<cr>
-inoremap <silent><buffer> <C-g>p <Esc>:call CreateAutoImportWindow(1)<cr>
-nnoremap <silent><buffer> <C-g><C-p> :call CreateAutoImportWindow(0)<cr>
+inoremap <silent><buffer> <C-g><C-i> <Esc>:call CreateAutoImportWindow(1)<cr>
+inoremap <silent><buffer> <C-g>i <Esc>:call CreateAutoImportWindow(1)<cr>
+nnoremap <silent><buffer> <C-g><C-i> :call CreateAutoImportWindow(0)<cr>
 nnoremap <silent><buffer> <C-g>p :call CreateAutoImportWindow(0)<cr>
 inoremap <silent><buffer> <expr> <C-g><C-n> <SID>prepare_completion()
-
-fun! VimJMessSID() "{{{
-  return s:sid
-endfunction "}}}

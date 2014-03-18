@@ -4,6 +4,8 @@ Before:
   let ApplyFun=function('<SNR>'.jsid.'apply_substitutions')
   let FormatDictFun=function('<SNR>'.jsid.'format_dict')
   let FormatJavapOutput=function('<SNR>'.jsid.'format_javap_output')
+  let AutoWriteTypeVar=function('<SNR>'.jsid.'autowrite_type_var')
+  let AutoWriteNewFromVar=function('<SNR>'.jsid.'autowrite_new_from_var')
 Given:
 Execute:
   call setline(1, ApplyFun('abstract void error(String, Throwable)'))
@@ -36,4 +38,17 @@ Execute:
   for l in lines | call append(line('$'), l) | endfor
   normal ggdd
 Expect:
-  ResultActions perform(org.springframework.test.web.servlet.RequestBuilder)       throws Exception;
+  org.springframework.test.web.servlet.ResultActions perform(org.springframework.test.web.servlet.RequestBuilder)       throws Exception;
+Given:
+  TheClassType
+Do:
+  A\<C-g>e
+Expect:
+  TheClassType theClassType
+Given:
+  theClassType
+Do:
+  A\<C-g>E
+Expect:
+  theClassType = new TheClassType();
+
