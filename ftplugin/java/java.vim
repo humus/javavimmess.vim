@@ -955,8 +955,9 @@ let g:dict_javavim['def_variables_method'] = function('<SNR>' . s:sid . 'return_
 
 fun! s:autowrite_type_var() "{{{
   let l:pos = getpos('.')
-  let l:col_ = s:find_first_word_column(l:pos[2]-3, 0)
-  let l:candidate = getline(line('.'))[col_ : l:pos[2]-1]
+  let l:col_1 = s:find_first_word_column(l:pos[2]-3)
+  let l:col_2 = s:find_last_word_column(l:pos[2]-3)
+  let l:candidate = getline(line('.'))[l:col_1 : l:col_2]
   let l:needs_space = l:candidate =~ '\s$' ? 0 : 1
   if l:candidate =~# '^[A-Z]'
     let l:ret_val = (l:needs_space ? ' ' : '') .

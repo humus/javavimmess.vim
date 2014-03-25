@@ -52,3 +52,9 @@ Do:
 Expect:
   theClassType = new TheClassType();
 
+Given:
+  (TheClassType)
+Do:
+  f)i\<C-g>e
+Expect:
+  (TheClassType theClassType)
