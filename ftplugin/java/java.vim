@@ -272,9 +272,11 @@ fun! JavacBuffer() "{{{
     redraw
     if output == ''
       echom 'OK'
+      return 1
     else
       let lines = split(output, '\v\n')
       for l in lines | echom l | endfor
+      return 0
     endif
   catch /.*/
   finally
@@ -988,6 +990,115 @@ fun! s:autowrite_new_from_var() "{{{
   return l:ret_val
 endfunction "}}}
 
+fun! s:check_for_dot_class() "{{{
+  let l:class = s:current_clazz()
+  let l:path = s:get_class_file_path(l:class)
+    return filereadable(l:path)
+endfunction "}}}
+
+fun! s:analyze_javap_output() "{{{
+  let dirs = s:calculate_dirs()
+  try
+    execute 'lcd ' . dirs.project_dir
+    if !s:check_for_dot_class()
+      if !JavacBuffer()
+        echohl WarningMsg | echo 'Class has errors' | echohl NONE
+        return
+      endif
+    endif
+    let l:output = s:exec_javap(s:current_clazz(), 1)
+    let l:props = s:get_properties(l:output)
+    let l:methods = s:get_setters_getters(l:output)
+    call s:append_getters_setters(l:props, l:methods)
+  finally
+    execute 'lcd ' . dirs.cwd_dir
+  endtry
+endfunction "}}}
+
+fun! s:append_getters_setters(props, methods) "{{{
+  let l:generated_methods = []
+  let l:lines_to_append = []
+  for l:prop in a:props
+    let l:getter_prefix = l:prop.type . ' '
+    let l:getter_prefix .= substitute(l:prop.name, '^.', 'get\u&', '')
+    let l:setter_prefix = substitute(l:prop.name, '^.', 'void set\u&', '')
+    let l:prop.getter = s:check_for_getter_setter(l:getter_prefix, a:methods)
+    let l:prop.setter = s:check_for_getter_setter(l:setter_prefix, a:methods)
+    let l:lines_to_append += s:create_getter_lines(l:prop, l:getter_prefix)
+    let l:lines_to_append += s:create_setter_lines(l:prop, l:setter_prefix)
+  endfor
+  if len(l:lines_to_append) > 0
+    let l:line = s:calculate_getter_setter_pos()
+    call append(l:line, l:lines_to_append)
+  endif
+endfunction "}}}
+
+fun! s:create_getter_lines(prop, prefix) "{{{
+  let l:lines = []
+  if a:prop.getter
+    call add(l:lines, '    public ' . a:prefix . '() {')
+    call add(l:lines, '        return ' . a:prop.name . ';')
+    call add(l:lines, '    }')
+    call add(l:lines, '')
+  endif
+  return l:lines
+endfunction "}}}
+
+fun! s:create_setter_lines(prop, prefix) "{{{
+  let l:lines = []
+  if a:prop.setter
+    call add(l:lines, '    public ' . a:prefix . '(' .
+          \ a:prop.type . ' ' . a:prop.name
+          \ . ') {')
+    call add(l:lines, '        this.' . a:prop.name . '='. a:prop.name .';')
+    call add(l:lines, '    }')
+    call add(l:lines, '')
+  endif
+  return l:lines
+endfunction "}}}
+
+fun! s:check_for_getter_setter(method, methods) "{{{
+  if index(a:methods, a:method) == -1
+    return 1
+  else
+    return 0
+  endif
+endfunction "}}}
+
+fun! s:calculate_getter_setter_pos() "{{{
+  let l:lines = []
+  call add(l:lines, searchpos('\v^}$')[0])
+  call add(l:lines, searchpos('\v^\s+public boolean equals')[0])
+  call add(l:lines, searchpos('\v^\s+public int hashCode')[0])
+  call add(l:lines, searchpos('\v^\s+public String toString')[0])
+  let l:lines = filter(l:lines, 'v:val > 0')
+  call sort(l:lines)
+  return l:lines[0] - 1
+endfunction "}}}
+
+fun! s:get_properties(javap_output) "{{{
+  let l:props = filter(copy(a:javap_output), 'v:val =~? ''\v(private|protected).+[[:alnum:]];$''')
+  let l:props = map(l:props, 'substitute(v:val, ''\v^\s+(private|protected)\s+([[:alnum:]\$_]+\.)*'', '''', '''')')
+  let l:dicts = []
+  for l in l:props
+    let l:match = matchlist(l, '\v(\w+)\s+(\w+);')
+    call add(l:dicts, {'type': l:match[1], 'name': l:match[2]})
+  endfor
+  return l:dicts
+endfunction "}}}
+
+fun! s:get_setters_getters(javap_output) "{{{
+  let l:methods = filter(copy(a:javap_output), 'v:val =~? ''\v[sg]et\w+\(.*\);''')
+  let l:methods = map(l:methods, 'substitute(v:val, ''\v^\s+public %(\w+\.)*(\w+%(\.)@!.+\s\S+)\(.*$'', ''\1'', '''')')
+  return l:methods
+endfunction "}}}
+
+fun! s:get_class_file_path(class_file) "{{{
+  let l:path = substitute(a:class_file, '\v\.', '/', 'g') . '.class'
+  let l:path = 'target/classes/'.l:path
+  return l:path
+endfunction "}}}
+
 fun! VimJMessSID() "{{{
   return s:sid
 endfunction "}}}
@@ -995,7 +1106,6 @@ endfunction "}}}
 inoremap <expr> <C-g><C-e> <SID>autowrite_type_var()
 inoremap <expr> <C-g>e     <SID>autowrite_type_var()
 inoremap <expr> <C-g>E     <SID>autowrite_new_from_var()
-
 nnoremap g5 :call CreateDescribeWindow()<CR>
 
 command! FileIndexSort call s:sort_file_index_cd()
