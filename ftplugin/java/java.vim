@@ -450,7 +450,7 @@ fun! s:find_Project_Base(base) "{{{
   return ''
 endfunction "}}}
 
-function! s:delete_current_class_file(base)
+fun! s:delete_current_class_file(base) "{{{
   let project_base = s:find_Project_Base(a:base)
   if project_base != ''
     let package = getline(searchpos("^package", 'bn')[0])
@@ -465,7 +465,7 @@ function! s:delete_current_class_file(base)
     call feedkeys("\<C-l>")
     redraw
   endif
-endfunction
+endfunction "}}}
 
 fun! FindClassType(clazz) "{{{
   "Obtain current clazz and package to check if this is a test class
@@ -990,79 +990,91 @@ fun! s:autowrite_new_from_var() "{{{
   return l:ret_val
 endfunction "}}}
 
-fun! s:check_for_dot_class() "{{{
-  let l:class = s:current_clazz()
-  let l:path = s:get_class_file_path(l:class)
-    return filereadable(l:path)
-endfunction "}}}
-
-fun! s:analyze_javap_output() "{{{
-  let dirs = s:calculate_dirs()
+fun! s:getters_setters() "{{{
+  let l:dirs = s:calculate_dirs()
   try
-    execute 'lcd ' . dirs.project_dir
-    if !s:check_for_dot_class()
-      if !JavacBuffer()
-        echohl WarningMsg | echo 'Class has errors' | echohl NONE
-        return
+    execute 'lcd ' . l:dirs.project_dir
+    let l:pos = getpos('.')
+    let l:props = []
+    for line in range(1, line('$'))
+      if getline(line) =~# '\v^\s+(protected|private)( final)@!( static)@!\s+(.+)\s+[^[:space:]]+;\s*$'
+        call add(l:props, getline(line))
       endif
+    endfor
+    call map(l:props, '<SID>clean_property(v:val)')
+    let l:lines_to_append = s:define_lines_to_append(l:props)
+    if len(l:lines_to_append) > 0
+      let l:line = s:calculate_getter_setter_pos()
+      call append(l:line, l:lines_to_append)
     endif
-    let l:output = s:exec_javap(s:current_clazz(), 1)
-    let l:props = s:get_properties(l:output)
-    let l:methods = s:get_setters_getters(l:output)
-    call s:append_getters_setters(l:props, l:methods)
+    cal cursor(pos[1], pos[2])
   finally
-    execute 'lcd ' . dirs.cwd_dir
+    execute 'lcd ' . l:dirs.cwd_dir
   endtry
 endfunction "}}}
 
-fun! s:append_getters_setters(props, methods) "{{{
-  let l:generated_methods = []
+fun! s:define_lines_to_append(props) "{{{
   let l:lines_to_append = []
-  for l:prop in a:props
-    let l:getter_prefix = l:prop.type . ' '
-    let l:getter_prefix .= substitute(l:prop.name, '^.', 'get\u&', '')
-    let l:setter_prefix = substitute(l:prop.name, '^.', 'void set\u&', '')
-    let l:prop.getter = s:check_for_getter_setter(l:getter_prefix, a:methods)
-    let l:prop.setter = s:check_for_getter_setter(l:setter_prefix, a:methods)
-    let l:lines_to_append += s:create_getter_lines(l:prop, l:getter_prefix)
-    let l:lines_to_append += s:create_setter_lines(l:prop, l:setter_prefix)
+  for prop in a:props
+    let l:lines_to_append += s:define_lines_for_property(prop)
   endfor
-  if len(l:lines_to_append) > 0
-    let l:line = s:calculate_getter_setter_pos()
-    call append(l:line, l:lines_to_append)
-  endif
+  return l:lines_to_append
 endfunction "}}}
 
-fun! s:create_getter_lines(prop, prefix) "{{{
-  let l:lines = []
-  if a:prop.getter
-    call add(l:lines, '    public ' . a:prefix . '() {')
-    call add(l:lines, '        return ' . a:prop.name . ';')
-    call add(l:lines, '    }')
-    call add(l:lines, '')
-  endif
-  return l:lines
+fun! s:define_lines_for_property(prop) "{{{
+    let l:getter_line = substitute(a:prop,
+          \ '\v(.+)\s([^[:space:]]+)$',
+          \ 'public \1 get\u\2() {', '')
+    let l:setter_line = substitute(a:prop,
+          \ '\v(.+)\s([^[:space:]]+)$',
+          \ 'public void set\u\2(\1 \2) {', '')
+    let l:getter_lines = s:provide_getter_lines(l:getter_line, a:prop)
+    let l:setter_lines = s:provide_setter_lines(l:setter_line, a:prop)
+    return l:getter_lines + l:setter_lines
 endfunction "}}}
 
-fun! s:create_setter_lines(prop, prefix) "{{{
-  let l:lines = []
-  if a:prop.setter
-    call add(l:lines, '    public ' . a:prefix . '(' .
-          \ a:prop.type . ' ' . a:prop.name
-          \ . ') {')
-    call add(l:lines, '        this.' . a:prop.name . '='. a:prop.name .';')
-    call add(l:lines, '    }')
-    call add(l:lines, '')
+fun! s:provide_getter_lines(getter_line, prop) "{{{
+  if s:find_gettersetter(a:getter_line)
+    return []
   endif
-  return l:lines
+
+  let l:indent = &et ? '    ':'	'
+  let l:definition = l:indent . a:getter_line . ':'
+  let l:definition .= substitute(a:prop,
+        \ '\v(.+)\s([^[:space:]]+)$',
+        \ repeat(l:indent, 2) . 'return \2;', '')
+  let l:definition .= ':' . l:indent . '}::'
+  return split(l:definition, ':')
 endfunction "}}}
 
-fun! s:check_for_getter_setter(method, methods) "{{{
-  if index(a:methods, a:method) == -1
-    return 1
-  else
-    return 0
+fun! s:provide_setter_lines(setter_line, prop) "{{{
+  if s:find_gettersetter(a:setter_line)
+    return []
   endif
+
+  let l:indent = &et ? '    ':'	'
+  let l:definition = l:indent . a:setter_line . ':'
+  let l:definition .= substitute(a:prop,
+        \ '\v(.+)\s([^[:space:]]+)$',
+        \ repeat(l:indent, 2) . 'this.\2 = \2;', '')
+  let l:definition .= ':' . l:indent . '}::'
+  return split(l:definition, ':')
+endfunction "}}}
+
+fun! s:find_gettersetter(getsetline) "{{{
+  let l:expr = '\v' . a:getsetline
+  let l:expr = substitute(l:expr, '\v\{', '[{]', '')
+  let l:expr = substitute(l:expr, '\v\(\zs.{-}\ze\)', '[[:space:]\\n]*[^\)]*.{-}', '')
+  let l:expr = substitute(l:expr, ' ', '\\s+', 'g')
+  let l:expr = substitute(l:expr, '\v[<>()]', '\\&', 'g')
+  let g:exp = l:expr
+  return search(l:expr, 'nw')
+endfunction "}}}
+
+fun! s:clean_property(prop) "{{{
+  let l:prop = substitute(a:prop, '\v^\s+(private|protected) ', '', '')
+  let l:prop = substitute(l:prop, '\v;\s*$', '', '')
+  return l:prop
 endfunction "}}}
 
 fun! s:calculate_getter_setter_pos() "{{{
@@ -1076,29 +1088,6 @@ fun! s:calculate_getter_setter_pos() "{{{
   return l:lines[0] - 1
 endfunction "}}}
 
-fun! s:get_properties(javap_output) "{{{
-  let l:props = filter(copy(a:javap_output), 'v:val =~? ''\v(private|protected).+[[:alnum:]];$''')
-  let l:props = map(l:props, 'substitute(v:val, ''\v^\s+(private|protected)\s+([[:alnum:]\$_]+\.)*'', '''', '''')')
-  let l:dicts = []
-  for l in l:props
-    let l:match = matchlist(l, '\v(\w+)\s+(\w+);')
-    call add(l:dicts, {'type': l:match[1], 'name': l:match[2]})
-  endfor
-  return l:dicts
-endfunction "}}}
-
-fun! s:get_setters_getters(javap_output) "{{{
-  let l:methods = filter(copy(a:javap_output), 'v:val =~? ''\v[sg]et\w+\(.*\);''')
-  let l:methods = map(l:methods, 'substitute(v:val, ''\v^\s+public %(\w+\.)*(\w+%(\.)@!.+\s\S+)\(.*$'', ''\1'', '''')')
-  return l:methods
-endfunction "}}}
-
-fun! s:get_class_file_path(class_file) "{{{
-  let l:path = substitute(a:class_file, '\v\.', '/', 'g') . '.class'
-  let l:path = 'target/classes/'.l:path
-  return l:path
-endfunction "}}}
-
 fun! VimJMessSID() "{{{
   return s:sid
 endfunction "}}}
@@ -1108,6 +1097,7 @@ inoremap <expr> <C-g>e     <SID>autowrite_type_var()
 inoremap <expr> <C-g>E     <SID>autowrite_new_from_var()
 nnoremap g5 :call CreateDescribeWindow()<CR>
 
+command! -buffer GetSet call s:getters_setters()
 command! FileIndexSort call s:sort_file_index_cd()
 command! -buffer CompileOnSaveToggle call ToggleSettingCompileOnSave()
 command! -buffer CacheCurrProjMaven call CacheThisMavenProj()
@@ -1117,9 +1107,12 @@ command! -bar -buffer Javac call JavacBuffer()
 command! -bar -buffer Junit call JUnitCurrent()
 command! -bar -buffer Javap call Javapcword()
 command! -buffer A call s:Alternate()
+
+nnoremap gG :GetSet<cr>
 nnoremap <silent><buffer> g7 :call <SID>javap_current()<cr>
 inoremap <silent><buffer> <C-g><C-i> <Esc>:call CreateAutoImportWindow(1)<cr>
 inoremap <silent><buffer> <C-g>i <Esc>:call CreateAutoImportWindow(1)<cr>
 nnoremap <silent><buffer> <C-g><C-i> :call CreateAutoImportWindow(0)<cr>
 nnoremap <silent><buffer> <C-g>p :call CreateAutoImportWindow(0)<cr>
 inoremap <silent><buffer> <expr> <C-g><C-n> <SID>prepare_completion()
+
