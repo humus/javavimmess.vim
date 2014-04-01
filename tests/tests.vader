@@ -6,6 +6,7 @@ Before:
   let FormatJavapOutput=function('<SNR>'.jsid.'format_javap_output')
   let AutoWriteTypeVar=function('<SNR>'.jsid.'autowrite_type_var')
   let AutoWriteNewFromVar=function('<SNR>'.jsid.'autowrite_new_from_var')
+  let GetPropertiesLineNumbers=function('<SNR>'.jsid.'get_property_line_numbers')
 Given:
 Execute:
   call setline(1, ApplyFun('abstract void error(String, Throwable)'))
@@ -55,6 +56,20 @@ Expect:
 Given:
   (TheClassType)
 Do:
-  f)i\<C-g>e
+  ^f)i\<C-g>e
 Expect:
   (TheClassType theClassType)
+Given:
+  public class AClass {
+      private String string;
+      private Integer integer;
+  }
+Execute:
+  call append(line('$'), GetPropertiesLineNumbers())
+Expect:
+  public class AClass {
+      private String string;
+      private Integer integer;
+  }
+  2
+  3

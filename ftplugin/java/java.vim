@@ -9,6 +9,7 @@ let s:selected_class = ''
 let g:dict_javavim = {}
 "code taken from xptemplate plugin
 let s:let_sid = 'map <Plug>jsid <SID>|let s:sid=matchstr(maparg("<Plug>jsid"), "\\d\\+_")|unmap <Plug>jsid'
+let s:prompt_height = 4
 exe s:let_sid
 
 let s:completion_dict = {}
@@ -16,6 +17,8 @@ let s:completion_dict = {}
 let s:method_def_expr =
 \ '\v^%(\t|    )%((private |protected |public )%((public|private|protected)@!))?[[:alnum:]]+(\<.+\>)?[[:space:]\n]{1,}[[:alnum:]\$_]+\s{-}\('
 let s:method_bodystart_expr = '\v\{'
+let s:matching_properties = '\v^\s+(protected|private)( final)@!( static)@!\s+(.+)\s+[^[:space:]]+;\s*$'
+let s:match_highlight_suffix = '\s+(protected|private)( final)@!( static)@!\s+(.+)\s+\zs[^[:space:]]+\ze;\s*$'
 
 fun! CacheThisMavenProj() abort "{{{
   let adir = fnamemodify(findfile('pom.xml', '.;'), ':h')
@@ -522,15 +525,15 @@ fun! CreateAutoImportWindow(back_to_insert_mode) "{{{
 endfunction "}}}
 
 fun! s:find_type_from_var_or_type(type_or_var) "{{{
-    " Word under cursor is a variable
-    " the totally weird cur_word[1]=='$' is because '$' has to be escaped
-    if a:type_or_var =~# '\v^[a-z]' || a:type_or_var[1] == '$'
-      let l:var_type = s:find_variable_type(a:type_or_var)
-    else
+  " Word under cursor is a variable
+  " the totally weird cur_word[1]=='$' is because '$' has to be escaped
+  if a:type_or_var =~# '\v^[a-z]' || a:type_or_var[1] == '$'
+    let l:var_type = s:find_variable_type(a:type_or_var)
+  else
     " Word under cursor is a Class/Interface
-      let l:var_type = a:type_or_var
-    endif
-    return l:var_type
+    let l:var_type = a:type_or_var
+  endif
+  return l:var_type
 endfunction "}}}
 
 fun! CreateDescribeWindow() "{{{
@@ -595,7 +598,7 @@ fun! s:find_last_word_column(column, ...) "{{{
 
   let cur_line = getline(line('.'))
   if cur_line[a:column] =~ l:search_expr
-        \ ||   a:column >= len(cur_line)
+        \ || a:column >= len(cur_line)
     return a:column - 1
   endif
   if len(a:000) > 0 && a:1
@@ -629,13 +632,13 @@ fun! s:fill_buffer_imports(search_term) "{{{
 endfunction "}}}
 
 fun! s:grep_cword_from_index(search_term) "{{{
-    if has('win32')
-      let search_expr = 'findstr /I "^' . a:search_term . '" < ' . '.cache/classes.index'
-    else
-      let search_expr = 'grep -i -e ^' . a:search_term . ' .cache/classes.index'
-    endif
-    let contents = split(system(search_expr), '\n')
-    return contents
+  if has('win32')
+    let search_expr = 'findstr /I "^' . a:search_term . '" < ' . '.cache/classes.index'
+  else
+    let search_expr = 'grep -i -e ^' . a:search_term . ' .cache/classes.index'
+  endif
+  let contents = split(system(search_expr), '\n')
+  return contents
 endfunction "}}}
 
 fun! s:mappings_for_auto_import_window(back_to_insert_mode) "{{{
@@ -703,111 +706,110 @@ endfunction "}}}
 
 " Alternation functions
 fun! s:Alternate() "{{{
-    let file_path = expand('%:p:h')
-    if file_path =~ '.*\<test\>'
-        call s:SwitchFromTest()
-        return
-    endif
+  let file_path = expand('%:p:h')
+  if file_path =~ '.*\<test\>'
+    call s:SwitchFromTest()
+    return
+  endif
 
-    call s:SwitchToTest()
+  call s:SwitchToTest()
 endfunction "}}}
 
 fun! s:SwitchFromTest() "{{{
-    let package_loc = search("^package", 'bn')
-    if package_loc == 0
-        echohl WarningMsg | echo 'NULL' | echohl None
-        return
+  let package_loc = search("^package", 'bn')
+  if package_loc == 0
+    echohl WarningMsg | echo 'NULL' | echohl None
+    return
+  endif
+  let package = getline(package_loc)
+  let file_path = expand('%:p:h')
+
+  let path_prefix = substitute(file_path, '\W\zstest\ze\W', 'main', '')
+
+  let test_name = expand('%:t:r')
+  let full_path_one = path_prefix . '/' . substitute(test_name, 'Test', '', '') . '.java'
+  let full_path_two = path_prefix . '/impl/' . substitute(test_name, 'Test', '', '') . 'Impl.java'
+  let full_path_three = path_prefix . '/' . substitute(test_name, 'Test', '', '') . 'Impl.java'
+
+  let l:paths = [full_path_one, full_path_two, full_path_three]
+
+  if !filereadable(full_path_one) && !filereadable(full_path_two) && !filereadable(full_path_three)
+    try
+      call CreateFileToTest(l:paths, package)
+    catch /CANCEL/
+      echohl WarningMsg | echo "CANCEL" | echohl None
+      return
+    endtry
+  endif
+
+  for full_path in l:paths
+    if filereadable(full_path) && filewritable(full_path)
+      let file_to_test = full_path
+      break
     endif
-    let package = getline(package_loc)
-    let file_path = expand('%:p:h')
+  endfor
 
-    let path_prefix = substitute(file_path, '\W\zstest\ze\W', 'main', '')
-
-    let test_name = expand('%:t:r')
-    let full_path_one = path_prefix . '/' . substitute(test_name, 'Test', '', '') . '.java'
-    let full_path_two = path_prefix . '/impl/' . substitute(test_name, 'Test', '', '') . 'Impl.java'
-    let full_path_three = path_prefix . '/' . substitute(test_name, 'Test', '', '') . 'Impl.java'
-
-    let paths = [full_path_one, full_path_two, full_path_three]
-
-    if !filereadable(full_path_one) && !filereadable(full_path_two) && !filereadable(full_path_three)
-        try
-            call CreateFileToTest(paths, package)
-        catch /CANCEL/
-             echohl WarningMsg | echo "CANCEL" | echohl None
-             return
-        endtry
-    endif
-
-    for full_path in paths
-        if filereadable(full_path) && filewritable(full_path)
-            let file_to_test = full_path
-            break
-        endif
-    endfor
-
-    silent! exe 'e ' . file_to_test
+  silent! exe 'e ' . file_to_test
 
 endfunction "}}}
 
-silent! fun! CreateFileToTest(paths, package) "{{{
-    let message = ''
-    for path_ in a:paths
-        let message .= path_ . "\n"
-    endfor
+fun! CreateFileToTest(paths, package) "{{{
+  let message = ''
+  for path_ in a:paths
+    let message .= path_ . "\n"
+  endfor
 
-    echo a:paths
-    let message .= 'None, Cancel'
+  let message .= 'None, Cancel'
 
-    let choice = confirm('File will be?', message, 1)
+  let choice = confirm('File will be?', message, 1)
 
-    if choice == 0 || choice == len(a:paths) + 1
-        throw "CANCEL"
-    endif
+  if choice == 0 || choice == len(a:paths) + 1
+    throw "CANCEL"
+  endif
 
-    let path = a:paths[choice-1]
-    let a_dir = join(split(path, '[\\/]')[:-2], '/')
+  let path = a:paths[choice-1]
+  let a_dir = join(split(path, '[\\/]')[:-2], '/')
 
-    if !isdirectory(a_dir)
-        call mkdir(a_dir, 'p')
-    endif
+  if !isdirectory(a_dir)
+    call mkdir(a_dir, 'p')
+  endif
 
-    let package = a:package
+  let package = a:package
 
-    if a_dir =~ 'impl\W'
-        let package .= '.impl'
-    endif
+  if a_dir =~ 'impl\W'
+    let package .= '.impl'
+  endif
 
-    let class_name = split(split(path, '[\\/]')[-1], '\.')[0]
+  let class_name = split(split(path, '[\\/]')[-1], '\.')[0]
 
-    call writefile([package
-                \ , '', 'public class ' . class_name
-                \ . '/*implements ' . substitute(class_name, 'Impl', '', ''), '*/ {'
-                \ , '', '}', ''], path)
+  call writefile([package
+        \ , '', 'public class ' . class_name
+        \ . '/*implements ' . substitute(class_name, 'Impl', '', ''), '*/ {'
+        \ , '', '}', ''], path)
 endfunction "}}}
 
 fun! s:SwitchToTest() "{{{
-    let package_loc = search("^package", 'bn')
-    if package_loc == 0
-        echohl WarningMsg | echo 'NULL' | echohl None
-        return
-    endif
-    let package = getline(package_loc)
-    let file_path = expand('%:p:h')
+  let package_loc = search("^package", 'bn')
+  if package_loc == 0
+    echohl WarningMsg | echo 'NULL' | echohl None
+    return
+  endif
+  let package = getline(package_loc)
+  let file_path = expand('%:p:h')
 
-    let new_file_path = substitute(substitute(file_path, '\W\zsmain\ze\W', 'test', ''), '\W\zsimpl\(\W\|$\)', '', '')
+  let new_file_path = substitute(substitute(file_path, '\W\zsmain\ze\W', 'test', ''), '\W\zsimpl\(\W\|$\)', '', '')
 
-    if !isdirectory(new_file_path)
-        call mkdir(new_file_path, 'p')
-    endif
+  if !isdirectory(new_file_path)
+    call mkdir(new_file_path, 'p')
+  endif
 
-    let test_name = substitute(expand('%:t:r'), '\(Impl\|Test\)$', '', '') . 'Test.java'
-    let test_file = new_file_path . '/' . test_name
+  let test_name = substitute(expand('%:t:r'), '\(Impl\|Test\)$', '', '') . 'Test.java'
+  let test_file = new_file_path . '/' . test_name
 
-    if !filewritable(test_file) && !filereadable(test_file)
-        call writefile([package, '', 'public class ' . split(test_name, '\.')[0] . ' {', '' , '}'], test_file)
-    endif
-    silent! execute 'e ' . test_file
+  if !filewritable(test_file) && !filereadable(test_file)
+    call writefile([package, '', 'public class ' . split(test_name, '\.')[0] . ' {', '' , '}'], test_file)
+  endif
+  silent! execute 'e ' . test_file
 endfunction "}}}
 
 fun! s:clear_autocmds_java_complete() "{{{
@@ -829,8 +831,8 @@ endfunction "}}}
 
 fun! s:prepare_completion() "{{{
   "Should I have to implement something like this?
-  augroup java_complete 
-    au! 
+  augroup java_complete
+    au!
     au InsertLeave *.java pclose
     au InsertLeave *.java set cfu=
     au InsertLeave *.java silent! iunmap <buffer> <cr>
@@ -870,7 +872,7 @@ fun! s:prepare_completion() "{{{
     let l:completions = s:format_dict(l:lines)
     let s:completion_dict.lines = l:completions
     "this weird stuff is just to support '$' in variable names
-    let s:completion_dict.col_start = first_col + 1 
+    let s:completion_dict.col_start = first_col + 1
           \ + len(substitute(var_name, '\\', '', 'g'))
 
   finally
@@ -995,14 +997,9 @@ fun! s:getters_setters() "{{{
   try
     execute 'lcd ' . l:dirs.project_dir
     let l:pos = getpos('.')
-    let l:props = []
-    for line in range(1, line('$'))
-      if getline(line) =~# '\v^\s+(protected|private)( final)@!( static)@!\s+(.+)\s+[^[:space:]]+;\s*$'
-        call add(l:props, getline(line))
-      endif
-    endfor
+    let l:props = s:get_property_lines()
     call map(l:props, '<SID>clean_property(v:val)')
-    let l:lines_to_append = s:define_lines_to_append(l:props)
+    let l:lines_to_append = s:define_getset_lines(l:props)
     if len(l:lines_to_append) > 0
       let l:line = s:calculate_getter_setter_pos()
       call append(l:line, l:lines_to_append)
@@ -1013,7 +1010,28 @@ fun! s:getters_setters() "{{{
   endtry
 endfunction "}}}
 
-fun! s:define_lines_to_append(props) "{{{
+fun! s:get_property_lines() "{{{
+  let l:props = []
+  for line in range(1, line('$'))
+    if getline(line) =~# s:matching_properties
+      call add(l:props, getline(line))
+    endif
+  endfor
+  return l:props
+endfunction "}}}
+
+fun! s:get_property_line_numbers() "{{{
+  let l:line_numbers = []
+  for line in range(1, line('$'))
+    if getline(line) =~# s:matching_properties
+      call add(l:line_numbers, line)
+    endif
+  endfor
+  return l:line_numbers
+endfunction "}}}
+
+
+fun! s:define_getset_lines(props) "{{{
   let l:lines_to_append = []
   for prop in a:props
     let l:lines_to_append += s:define_lines_for_property(prop)
@@ -1022,15 +1040,15 @@ fun! s:define_lines_to_append(props) "{{{
 endfunction "}}}
 
 fun! s:define_lines_for_property(prop) "{{{
-    let l:getter_line = substitute(a:prop,
-          \ '\v(.+)\s([^[:space:]]+)$',
-          \ 'public \1 get\u\2() {', '')
-    let l:setter_line = substitute(a:prop,
-          \ '\v(.+)\s([^[:space:]]+)$',
-          \ 'public void set\u\2(\1 \2) {', '')
-    let l:getter_lines = s:provide_getter_lines(l:getter_line, a:prop)
-    let l:setter_lines = s:provide_setter_lines(l:setter_line, a:prop)
-    return l:getter_lines + l:setter_lines
+  let l:getter_line = substitute(a:prop,
+        \ '\v(.+)\s([^[:space:]]+)$',
+        \ 'public \1 get\u\2() {', '')
+  let l:setter_line = substitute(a:prop,
+        \ '\v(.+)\s([^[:space:]]+)$',
+        \ 'public void set\u\2(\1 \2) {', '')
+  let l:getter_lines = s:provide_getter_lines(l:getter_line, a:prop)
+  let l:setter_lines = s:provide_setter_lines(l:setter_line, a:prop)
+  return l:getter_lines + l:setter_lines
 endfunction "}}}
 
 fun! s:provide_getter_lines(getter_line, prop) "{{{
@@ -1083,9 +1101,233 @@ fun! s:calculate_getter_setter_pos() "{{{
   call add(l:lines, searchpos('\v^\s+public boolean equals')[0])
   call add(l:lines, searchpos('\v^\s+public int hashCode')[0])
   call add(l:lines, searchpos('\v^\s+public String toString')[0])
+  return s:find_first_line(l:lines)
+endfunction "}}}
+
+fun! s:calculate_hashcode_pos() "{{{
+  let l:lines = []
+  call add(l:lines, search('\v^}$', 'wcn'))
+  call add(l:lines, search('\v^\s+public String toString', 'wcn'))
   let l:lines = filter(l:lines, 'v:val > 0')
+  return s:find_first_line(l:lines)
+endfunction "}}}
+
+fun! s:calculate_equals_pos() "{{{
+  let l:lines = []
+  call add(l:lines, search('\v^}$', 'wcn'))
+  call add(l:lines, search('\v^\s+public String toString', 'wcn'))
+  call add(l:lines, search('\v^\s+public int hashCode', 'wcn'))
+  let l:lines = filter(l:lines, 'v:val > 0') 
+  return s:find_first_line(l:lines)
+endfunction "}}}
+
+fun! s:find_first_line(lines) "{{{
+  let l:lines = filter(a:lines, 'v:val > 0')
   call sort(l:lines)
   return l:lines[0] - 1
+endfunction "}}}
+
+fun! s:gen_equals() "{{{
+  let l:pos = getpos('.')
+  let l:equals_l = s:search_equals()
+  if l:equals_l > 0
+    echohl WarningMsg | echo 'equals alreadyExists' | echohl None
+    return
+  endif
+  let l:properties = s:handle_props_for_stdmethods('Include property in Equals?')
+  if !empty(l:properties)
+    call s:append_equals(l:properties)
+  else
+    echohl WarningMsg | echo 'equals not generated' | echohl None
+  endif
+  call cursor(l:pos[1], l:pos[2])
+endfunction "}}}
+
+fun! s:gen_hashcode() "{{{
+  let l:pos = getpos('.')
+  let to_hashcode_l = s:search_hashcode()
+  if to_hashcode_l > 0
+    echohl WarningMsg | echo 'hashCode alreadyExists' | echohl None
+    return
+  endif
+  let l:properties = s:handle_props_for_stdmethods('Include property in hashCode?')
+  if !empty(l:properties)
+    call s:append_hashcode(l:properties)
+  else
+    echohl WarningMsg | echo 'hashCode not generated' | echohl None
+  endif
+  call cursor(l:pos[1], l:pos[2])
+endfunction "}}}
+
+fun! s:gen_tostring() "{{{
+  let l:pos = getpos('.')
+  let to_string_l = s:search_tostring()
+  if to_string_l > 0
+    echohl WarningMsg | echo 'toString alreadyExists' | echohl None
+    return
+  endif
+  let l:properties = s:handle_props_for_stdmethods('Include property in toString?')
+  if !empty(l:properties)
+    call s:append_tostring(l:properties)
+  else
+    echohl WarningMsg | echo 'toString not generated' | echohl None
+  endif
+  call cursor(l:pos[1], l:pos[2])
+endfunction "}}}
+
+fun! s:handle_props_for_stdmethods(prompt) "{{{
+  let l:prop_line_numbers = s:get_property_line_numbers()
+  let l:cmdheight = &cmdheight
+  let &cmdheight = s:prompt_height
+  set cul
+  try
+    let l:properties = s:prompt_for_generated_method(l:prop_line_numbers
+          \, a:prompt)
+  finally
+    let &cmdheight = l:cmdheight
+  endtry
+  set nocul
+  return l:properties
+endfunction "}}}
+
+fun! s:append_equals(properties) "{{{
+  let l:indent = &et ? '    ' : '	'
+  call s:ensure_import('org.apache.commons.lang.builder.EqualsBuilder')
+  let l:method = [l:indent.'public boolean equals(Object o) {',
+        \ repeat(l:indent, 2).'if (o == null) { return false; }',
+        \ repeat(l:indent, 2).'if (o == this) { return true; }',
+        \ repeat(l:indent, 2).'if (this.getClass() != o.getClass()) { return false; }',
+        \ repeat(l:indent, 2).s:get_class_name() . ' other  = ' .
+        \ '(' . s:get_class_name() . ')o;',
+        \ repeat(l:indent, 2).'return new EqualsBuilder()']
+  for l:prop in a:properties
+    let l:str_body = [repeat(l:indent, 4),
+          \'.append(this.', l:prop, ', other.' , l:prop, ')']
+    call add(l:method, join(l:str_body, ''))
+  endfor
+  call add(l:method, repeat(l:indent, 4).'.isEquals();')
+  call add(l:method, l:indent . '}')
+  call add(l:method, '')
+  let l:line = s:calculate_equals_pos()
+  call append(l:line, l:method)
+endfunction "}}}
+
+fun! s:get_class_name() "{{{
+  let l:expr = '\v^public class \zs\w+\ze'
+  let l:line = search(l:expr, 'bnw')
+  if l:line == 0
+    throw 'Something is wrong with java file'
+  endif
+  return matchstr(getline(l:line), l:expr)
+endfunction "}}}
+
+fun! s:append_hashcode(properties) "{{{
+  let l:indent = &et ? '    ' : '	'
+  call s:ensure_import('org.apache.commons.lang.builder.HashCodeBuilder')
+  let l:method = [l:indent.'public int hashCode() {', 
+        \ repeat(l:indent, 2).'return new HashCodeBuilder(7, 3)']
+  for l:prop in a:properties
+    let l:str_body = [repeat(l:indent, 4),
+          \'.append(', l:prop, ')']
+    call add(l:method, join(l:str_body, ''))
+  endfor
+  call add(l:method, repeat(l:indent, 4) . '.hashCode();')
+  call add(l:method, l:indent . '}')
+  call add(l:method, '')
+  call cursor(line('$'), 1)
+  let l:line = s:calculate_hashcode_pos()
+  call append(l:line, l:method)
+endfunction "}}}
+
+fun! s:append_tostring(properties) "{{{
+  let l:indent = &et ? '    ' : '	'
+  call s:ensure_import('org.apache.commons.lang.builder.ToStringBuilder')
+  let l:method = [l:indent.'public String toString() {', 
+        \ repeat(l:indent, 2).'return new ToStringBuilder(this)']
+  for l:prop in a:properties
+    let l:str_body = [repeat(l:indent, 4),
+          \'.append("', l:prop, '"', ', ', l:prop, ')']
+    call add(l:method, join(l:str_body, ''))
+  endfor
+  call add(l:method, repeat(l:indent, 4) . '.toString();')
+  call add(l:method, l:indent . '}')
+  call add(l:method, '')
+  call cursor(line('$'), 1)
+  call search('\v^\}\s*$', 'bc')
+  call append(line('.')-1, l:method)
+endfunction "}}}
+
+fun! s:search_hashcode() "{{{
+  return s:search_std_method('\v^\s+public\s+int\s+hashCode')
+endfunction "}}}
+
+fun! s:search_equals() "{{{
+  return s:search_std_method('\v^\s+public\s+boolean\s+equals')
+endfunction "}}}
+
+fun! s:search_tostring() "{{{
+  return s:search_std_method('\v^\s+public\s+String\s+toString')
+endfunction "}}}
+
+fun! s:search_std_method(method_expr) "{{{
+  let l:pos = getpos('.')
+  call cursor(line('$'), 1)
+  let l:found = search(a:method_expr, 'bn')
+  call cursor(l:pos[1], l:pos[2])
+  return l:found
+endfunction "}}}
+
+fun! s:ensure_import(clazz) "{{{
+  call cursor(line('$'), 1)
+  let exists_import = search('\v^import\s+' . a:clazz, 'bn')
+  if !exists_import
+    let l:line = search('\v^(package[^;]+;|import[^;]+;)', 'bn')
+    if l:line == 1
+      call append(1, '')
+      let l:line += 1
+    endif
+    call append(l:line, 'import ' . a:clazz . ';')
+  endif
+endfunction "}}}
+
+fun! s:prompt_for_generated_method(lines, prompt) "{{{
+  let l:responses = []
+  let l:response = ''
+  for ln in a:lines
+    echohl Question
+    call cursor(ln, 1)
+    let prop = matchstr(getline(ln), '\v.+\s\zs[^;]+\ze;')
+    let l:highlighted = matchadd('Question', join(['\v%', ln, 'l^', s:match_highlight_suffix], ''))
+    if l:response != 'a'
+      let l:response = s:prompt_while_invalid(a:prompt)
+    endif
+    call matchdelete(l:highlighted)
+    if or(l:response == 'y', l:response == 'a')
+      call add(l:responses, prop)
+    endif
+    if l:response == 'q'
+      let l:responses = []
+      let l:response = 'd'
+    endif
+    if l:response == 'd'
+      break
+    endif
+    echohl None
+  endfor
+  return l:responses
+endfunction "}}}
+
+fun! s:prompt_while_invalid(promptstr) "{{{
+  redraw
+  let &cmdheight = s:prompt_height
+  echo a:promptstr
+  echo "y/n/a/d/q\n"
+  let l:response=tolower(nr2char(getchar()))
+  let &cmdheight=1
+  if l:response !~ "\\v[ynadq\<Esc>]"
+    call s:prompt_while_invalid(a:promptstr)
+  endif
+  return l:response
 endfunction "}}}
 
 fun! VimJMessSID() "{{{
@@ -1098,6 +1340,9 @@ inoremap <expr> <C-g>E     <SID>autowrite_new_from_var()
 nnoremap g5 :call CreateDescribeWindow()<CR>
 
 command! -buffer GetSet call s:getters_setters()
+command! -buffer ToString call s:gen_tostring()
+command! -buffer HashCode call s:gen_hashcode()
+command! -buffer Equalsj call s:gen_equals()
 command! FileIndexSort call s:sort_file_index_cd()
 command! -buffer CompileOnSaveToggle call ToggleSettingCompileOnSave()
 command! -buffer CacheCurrProjMaven call CacheThisMavenProj()
@@ -1108,7 +1353,10 @@ command! -bar -buffer Junit call JUnitCurrent()
 command! -bar -buffer Javap call Javapcword()
 command! -buffer A call s:Alternate()
 
-nnoremap gG :GetSet<cr>
+nnoremap <silent><buffer> gG :GetSet<cr>
+nnoremap <silent><buffer> gS :ToString<cr>
+nnoremap <silent><buffer> gH :HashCode<cr>
+nnoremap <silent><buffer> gQ :Equalsj<cr>
 nnoremap <silent><buffer> g7 :call <SID>javap_current()<cr>
 inoremap <silent><buffer> <C-g><C-i> <Esc>:call CreateAutoImportWindow(1)<cr>
 inoremap <silent><buffer> <C-g>i <Esc>:call CreateAutoImportWindow(1)<cr>
