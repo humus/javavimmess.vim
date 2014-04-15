@@ -211,22 +211,7 @@ fun! s:reformat_index_line(index_line) "{{{
     \ '\v/', '.', 'g')
 endfunction "}}}
 
-fun! s:extract_class_names() "{{{
-  let lines = readfile('classes.index')
-  let classnames = map(copy(lines), 'matchstr(v:val, ''\v^\S+\ze	.*'')')
-  let classnames = filter(copy(classnames), 'index(classnames, v:val, v:key+1) == -1')
-  call writefile(classnames, 'classnames.index')
-endfunction "}}}
-
-fun! s:sort_file_index_cd() "{{{
-  let dirs = s:calculate_dirs()
-  exe 'lcd ' . dirs.project_dir
-  lcd .cache
-  call s:extract_class_names()
-  exe 'lcd ' . dirs.cwd_dir
-endfunction "}}}
-
-fun! List_classes_cache() "{{{
+fun! s:list_classes_cache() "{{{
   let dirs = s:calculate_dirs()
   exe "lcd " . dirs.project_dir
   lcd .cache
@@ -484,6 +469,10 @@ fun! FindClassType(clazz) "{{{
     endif
   endif
   let line_import = FindImport(a:clazz)
+  "When line_import is zero it means the class is in the same package
+  if line_import == 0
+    return l:cur_package . '.' . a:clazz
+  endif
   return matchstr(getline(line_import), '\v^import\s+\zs.*\ze\W')
 endfunction "}}}
 
@@ -499,10 +488,6 @@ fun! FindImport(clazz) "{{{
   let expression = '\v^import .+<' . a_class . ';'
 
   let _pos = searchpos(expression, 'bn')[0]
-  if _pos == 0
-    throw 'Type could not be determined'
-  endif
-
   return _pos
 endfunction "}}}
 
@@ -854,7 +839,7 @@ fun! s:prepare_completion() "{{{
 
   let var_name = matchstr(complete_expr, '\v.+\ze\.')
   let var_name = substitute(var_name, '\v\$', '\\&', 'g')
-
+  let var_name = substitute(var_name, '\vthis\.', '', '')
   let dirs = s:calculate_dirs()
   exe "lcd " . dirs.project_dir
   try
@@ -1097,10 +1082,10 @@ endfunction "}}}
 
 fun! s:calculate_getter_setter_pos() "{{{
   let l:lines = []
-  call add(l:lines, searchpos('\v^}$')[0])
-  call add(l:lines, searchpos('\v^\s+public boolean equals')[0])
-  call add(l:lines, searchpos('\v^\s+public int hashCode')[0])
-  call add(l:lines, searchpos('\v^\s+public String toString')[0])
+  call add(l:lines, search('\v^}\s*$'))
+  call add(l:lines, search('\v^\s+public boolean equals'))
+  call add(l:lines, search('\v^\s+public int hashCode'))
+  call add(l:lines, search('\v^\s+public String toString'))
   return s:find_first_line(l:lines)
 endfunction "}}}
 
@@ -1108,7 +1093,6 @@ fun! s:calculate_hashcode_pos() "{{{
   let l:lines = []
   call add(l:lines, search('\v^}$', 'wcn'))
   call add(l:lines, search('\v^\s+public String toString', 'wcn'))
-  let l:lines = filter(l:lines, 'v:val > 0')
   return s:find_first_line(l:lines)
 endfunction "}}}
 
@@ -1117,13 +1101,16 @@ fun! s:calculate_equals_pos() "{{{
   call add(l:lines, search('\v^}$', 'wcn'))
   call add(l:lines, search('\v^\s+public String toString', 'wcn'))
   call add(l:lines, search('\v^\s+public int hashCode', 'wcn'))
-  let l:lines = filter(l:lines, 'v:val > 0') 
   return s:find_first_line(l:lines)
 endfunction "}}}
 
+fun! NumCompare(i1, i2)
+  return a:i1 - a:i2
+endfun
+
 fun! s:find_first_line(lines) "{{{
   let l:lines = filter(a:lines, 'v:val > 0')
-  call sort(l:lines)
+  let l:lines = sort(l:lines, "NumCompare")
   return l:lines[0] - 1
 endfunction "}}}
 
@@ -1197,7 +1184,7 @@ fun! s:append_equals(properties) "{{{
         \ repeat(l:indent, 2).'if (o == null) { return false; }',
         \ repeat(l:indent, 2).'if (o == this) { return true; }',
         \ repeat(l:indent, 2).'if (this.getClass() != o.getClass()) { return false; }',
-        \ repeat(l:indent, 2).s:get_class_name() . ' other  = ' .
+        \ repeat(l:indent, 2).s:get_class_name() . ' other = ' .
         \ '(' . s:get_class_name() . ')o;',
         \ repeat(l:indent, 2).'return new EqualsBuilder()']
   for l:prop in a:properties
@@ -1293,8 +1280,8 @@ endfunction "}}}
 fun! s:prompt_for_generated_method(lines, prompt) "{{{
   let l:responses = []
   let l:response = ''
+  echohl Question
   for ln in a:lines
-    echohl Question
     call cursor(ln, 1)
     let prop = matchstr(getline(ln), '\v.+\s\zs[^;]+\ze;')
     let l:highlighted = matchadd('Question', join(['\v%', ln, 'l^', s:match_highlight_suffix], ''))
@@ -1312,8 +1299,8 @@ fun! s:prompt_for_generated_method(lines, prompt) "{{{
     if l:response == 'd'
       break
     endif
-    echohl None
   endfor
+  echohl None
   return l:responses
 endfunction "}}}
 
@@ -1343,11 +1330,10 @@ command! -buffer GetSet call s:getters_setters()
 command! -buffer ToString call s:gen_tostring()
 command! -buffer HashCode call s:gen_hashcode()
 command! -buffer Equalsj call s:gen_equals()
-command! FileIndexSort call s:sort_file_index_cd()
 command! -buffer CompileOnSaveToggle call ToggleSettingCompileOnSave()
 command! -buffer CacheCurrProjMaven call CacheThisMavenProj()
-command! -buffer CreateIndex call CacheThisMavenProj() | call List_classes_cache()
-command! -buffer IndexCache call List_classes_cache()
+command! -buffer CreateIndex call CacheThisMavenProj() | call s:list_classes_cache()
+command! -buffer IndexCache call s:list_classes_cache()
 command! -bar -buffer Javac call JavacBuffer()
 command! -bar -buffer Junit call JUnitCurrent()
 command! -bar -buffer Javap call Javapcword()
