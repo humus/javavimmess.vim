@@ -1,0 +1,107 @@
+*javavimmess.vim* A plugin to speedup java develoment inside vim
+
+Author: Roberto Bernabé
+License: Same terms as Vim itself (see |license|)
+
+INTRODUCTION                                *javavimmess*
+
+Most java & JEE developers say If you're doing java you should Use an IDE.
+This plugin is an example of the fact You can say I souldn't leave vim just to
+use java and it doesn't slow me down in fact it does the opposite (of course
+you should be fluent with java and with vim for this to be true).
+
+DISCLAIMER                                  *javavimmess-disclaimer*
+
+Despite the name javavimmess relies in well stablished java conventions and
+prefer spaces over tab chars for indentation and because of this some
+shortcuts and commands may not work for you. If this is  your case any bug
+report or pull request for enhancenments and corrections is appreciated.
+
+This plugin is a work in progress and some commands really need a better error
+handling an it probably needs your help.
+
+
+COMMANDS                                    *javavimmess-commands*
+
+When open a `.java`file the buffer Automatically gets the following commands
+
+                                            *javavimmess-:GetSet*
+:GetSet                 Analyze the source code in the current buffer and
+                        generate needed getter and setters
+
+                                            *javavimmess-:ToString*
+:ToString               Analyze the source code in the current buffer and
+                        prompts the user for each property found to be included
+                        in the toString method
+
+                                            *javavimmess-:HashCode*
+:HashCode               Analyze the source code in the current buffer and
+                        prompts the user for each property found to be included
+                        in the hashCode method
+
+                                            *javavimmess-:Equalsj*
+:Equalsj                Analyse the source cod ein the current buffer and
+                        prompts the user for each property found to be used in
+                        the equals method
+
+                                            *javavimmess-:CompileOnSaveToggle*
+:CompileOnSaveToggle    Toggles on and off the option to compile a .java file
+                        when It's saved
+
+                                            *javavimmess-:CreateIndex*
+:CreateIndex            Create a special directory to store all the
+                        dependencies of the project and create a special files
+                        which list all the relevant classes to be used on
+                        imports and for completion
+
+                                            *javavimmess-:Javac*
+:Javac                  Compiles the .java file in the current buffer using
+                        dependencies collected by the :CreateIndex Command
+
+                                            *javavimmess-:Junit*
+:Junit                  Executes current class as a Junit test
+
+                                            *javavimmess-:A*
+:A                      Switch from a class to its Junit test. If test does
+                        not exists, it's created. It also switches from test
+                        class to the class under test And tries to create the
+                        class under test if it does not exists
+
+MAPPINGS                                    *javavimmess-mappings*
+
+When a java file is loaded, It gets the previous commands plus the following
+mappings:
+
+                                            *javavimmess-gG*
+normal gG               Executes the |:GetSet| command (mnemonic gGetSet)
+
+                                            *javavimmess-gS*
+normal gS               Executes the |:ToString| command (mnemonic gString)
+
+                                            *javavimmess-gH*
+normal gH               Executes the |:HashCode| command (mnemonic gHashcode)
+
+                                            *javavimmess-gQ*
+normap gQ               Executes the |:Equalsj| command (mnemonic geQuals)
+
+                                            *javavimmess-<C-g><C-n>*
+insert <C-g><C-n>       Analize cursor position and if needed start method or
+                        member autocomplete
+
+                                            *javavimmess-<C-g>i*
+insert <C-g>i           Analize cursor position and if needed create an
+                        AutoImport window to select the class to import
+
+                                            *javavimmess-<C-g><C-i>*
+insert <C-g><C-i>       See <C-g>i
+
+                                            *javavimmess-<C-g>e*
+insert <C-g><C-e>       Expand a type to a declaration ej |Clazz| is expanded
+                        to |Clazz| |clazz|.
+
+                                            *javavimmess-<C-g><C-e>*
+insert <C-g><C-e>       See <C-g>e
+
+                                            *javavimmess-<C-g>E*
+insert <C-g>E           Expand a variable name to a new class instance. I.E.
+                        |clazz| is expanded to |clazz| |=| |new| |Clazz();|
