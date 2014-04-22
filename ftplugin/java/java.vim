@@ -20,15 +20,15 @@ let s:method_bodystart_expr = '\v\{'
 let s:matching_properties = '\v^\s+(protected|private)( final)@!( static)@!\s+(.+)\s+[^[:space:]]+;\s*$'
 let s:match_highlight_suffix = '\s+(protected|private)( final)@!( static)@!\s+(.+)\s+\zs[^[:space:]]+\ze;\s*$'
 
-fun! CacheThisMavenProj() abort "{{{
-  let adir = fnamemodify(findfile('pom.xml', '.;'), ':h')
-  if adir =~ '\v^$' | let adir = '.' | endif
-  if adir !~ '\v/$' | let adir .= '/' | endif
-  let cmd_height = &cmdheight
+fun! s:cacheThisMavenProj() abort "{{{
+  let l:adir = fnamemodify(findfile('pom.xml', '.;'), ':h')
+  if l:adir =~ '\v^$' | let l:adir = '.' | endif
+  if l:adir !~ '\v/$' | let l:adir .= '/' | endif
+  let l:cmd_height = &cmdheight
   set cmdheight=3
-  let is_regenerated = s:prompt_regenerate_cache(adir)
-  exe "set cmdheight=" . cmd_height
-  if is_regenerated
+  let l:is_regenerated = s:prompt_regenerate_cache(adir)
+  exe "set cmdheight=" . l:cmd_height
+  if l:is_regenerated
     call s:populate_cache(adir)
   endif
 endfunction "}}}
@@ -62,13 +62,13 @@ endfunction "}}}
 
 fun! s:populate_cache(a_dir) abort "{{{
   call mkdir(a:a_dir . '.cache', 'p')
-  let cwd_ = getcwd()
+  let l:cwd_ = getcwd()
   exe "cd " . a:a_dir
   try
-    let paths = s:parse_mvn_output()
+    let l:paths = s:parse_mvn_output()
     call s:copy_files_to_cache(paths)
   finally
-    exe "cd " . cwd_
+    exe "cd " . l:cwd_
   endtry
 endfunction "}}}
 
@@ -89,14 +89,14 @@ fun! s:copy_files_to_cache(files) "{{{
 endfunction "}}}
 
 fun! s:exec_copies_win32(files) "{{{
-  let len_of_files = len(a:files)
-  let files_to_copy = []
-  let partial_lists = s:create_sublists(a:files, 25)
-  let counter = 0
-  for files_to_copy in partial_lists
-    call s:exec_copy_command_win32(files_to_copy)
-    let counter += len(files_to_copy)
-    redraw | echo counter . ' / ' . len_of_files
+  let l:len_of_files = len(a:files)
+  let l:files_to_copy = []
+  let l:partial_lists = s:create_sublists(a:files, 25)
+  let l:counter = 0
+  for files_to_copy in l:partial_lists
+    call s:exec_copy_command_win32(l:files_to_copy)
+    let l:counter += len(l:files_to_copy)
+    redraw | echo l:counter . ' / ' . l:len_of_files
   endfor
   redraw | echo 'DONE creating jar cache'
 endfunction "}}}
@@ -166,15 +166,15 @@ fun! s:create_sublists(files, size) "{{{
 endfunction "}}}
 
 fun! s:list_classes_win32(file_sublists, total) "{{{
-  let counter = 0
-  for sublist in a:file_sublists
-    call map(sublist, 's:str_jartf_call(v:val, ''findstr'')')
+  let l:counter = 0
+  for l:sublist in a:file_sublists
+    call map(l:sublist, 's:str_jartf_call(v:val, ''findstr'')')
     " && echo on <-- it's added because system(...) ignores last command
     " after "&&" I don't know why
-    let command = join(sublist, ' && ') . ' && echo on'
-    call system(command)
-    let counter += len(sublist)
-    redraw | echom counter ' / ' . a:total
+    let l:command = join(l:sublist, ' && ') . ' && echo on'
+    call system(l:command)
+    let l:counter += len(l:sublist)
+    redraw | echom l:counter ' / ' . a:total
   endfor
   redraw | echom 'DONE listing classes'
 endfunction "}}}
@@ -212,16 +212,16 @@ fun! s:reformat_index_line(index_line) "{{{
 endfunction "}}}
 
 fun! s:list_classes_cache() "{{{
-  let dirs = s:calculate_dirs()
-  exe "lcd " . dirs.project_dir
+  let l:dirs = s:calculate_dirs()
+  exe "lcd " . l:dirs.project_dir
   lcd .cache
   try
-    let jar_files = split(globpath('.', "*.jar"), '\n')
-    let sublists = s:create_sublists(jar_files, 15)
+    let l:jar_files = split(globpath('.', "*.jar"), '\n')
+    let l:sublists = s:create_sublists(l:jar_files, 15)
     if has('win32')
-      call s:list_classes_win32(sublists, len(jar_files))
+      call s:list_classes_win32(l:sublists, len(l:jar_files))
     else
-      call s:list_classes(sublists, len(jar_files))
+      call s:list_classes(l:sublists, len(l:jar_files))
     endif
     call s:sort_file_index()
   finally
@@ -230,12 +230,12 @@ fun! s:list_classes_cache() "{{{
 endfunction "}}}
 
 fun! s:calculate_dirs() "{{{
-  let project_dir = fnameescape(matchstr(findfile('pom.xml', '.;'), '\v.+\zepom\.xml$'))
-  if project_dir == ''
-    let project_dir = '.'
+  let l:project_dir = fnameescape(matchstr(findfile('pom.xml', '.;'), '\v.+\zepom\.xml$'))
+  if l:project_dir == ''
+    let l:project_dir = '.'
   endif
-  let cwd_dir = fnameescape(getcwd())
-  return {'project_dir': project_dir, 'cwd_dir': cwd_dir}
+  let l:cwd_dir = fnameescape(getcwd())
+  return {'project_dir': l:project_dir, 'cwd_dir': l:cwd_dir}
 endfunction "}}}
 
 fun! s:createclassesdirs() "{{{
@@ -372,19 +372,21 @@ fun! FindDeclaredType(variable) abort "{{{
 "s:method_def_expr <-- is The madness of a expression Which finds line where
 "method begins I normally keep files well indented so, '\v^%(\t|    )\}' will
 "match correctly almost always
-  let stopline = searchpair(
+  let l:stopline = searchpair(
         \ s:method_def_expr 
         \ , ''
         \ , '\v^%(\t|    )}'
         \ , 'bn')
-  let search_expr = '\v^\s+(final\s)?\S+.*(\=)@<!\s' . a:variable . '\s*[;=].*$'
-  let def_line = search(search_expr, 'cbnW', stopline)
-
-  return substitute(
+  let l:search_expr = '\v^\s+(final\s|for\s*\(\s*)?\S+.*(\=|:)@<!\s?' . a:variable . '\s*[[:punct:];=].*$'
+  let l:def_line = search(l:search_expr, 'cbnW', l:stopline)
+  let l:def_str = substitute(getline(l:def_line), '\v<for>\s*\(', '', '')
+  let l:type= substitute(
         \ substitute(
-        \ matchstr(getline(def_line),'\v^\s+(final\s)?\S+.{-}\ze\s' . a:variable . '.*')
+        \ matchstr(l:def_str,'\v^\s+(final\s)?\S+.{-}\ze\s' . a:variable . '.*')
         \ , '\v\<[^>]\>', '', '')
         \ , '\v^\s+|\s+$', '', 'g')
+
+  return l:type
 endfunction "}}}
 
 fun! s:findDeclaredTypeInMethod(variable) "{{{
@@ -485,9 +487,9 @@ endfunction "}}}
 
 fun! FindImport(clazz) "{{{
   let a_class = a:clazz
-  let expression = '\v^import .+<' . a_class . ';'
+  let l:expression = '\v^import .+<' . a_class . ';'
 
-  let _pos = searchpos(expression, 'bn')[0]
+  let _pos = searchpos(l:expression, 'bn')[0]
   return _pos
 endfunction "}}}
 
@@ -826,6 +828,7 @@ fun! s:prepare_completion() "{{{
   augroup END
 
   inoremap <buffer> <expr> <cr> <SID>manage_cursor_after_complete()
+  inoremap <buffer> <expr> <C-y> <SID>manage_cursor_after_complete()
   inoremap <buffer> <expr> <tab> <SID>manage_cursor_after_complete()
 
   let col = getpos('.')[2] - 1
@@ -901,6 +904,7 @@ fun! s:apply_substitutions(line) "{{{
   "format lines starting with static
   let l:line = substitute(a:line, '\v^<static>\s', '', '')
   let l:line = substitute(l:line, '\vabstract\s', '', '')
+  let l:line = substitute(l:line, '\v<synchronized>\s', '', '')
   let l:line = substitute(l:line, '\v^.{-}\s\ze.*', '', '') "to remove public keyword
   let l:line = substitute(l:line, ';', '', '')
   return l:line
@@ -1331,8 +1335,8 @@ command! -buffer ToString call s:gen_tostring()
 command! -buffer HashCode call s:gen_hashcode()
 command! -buffer Equalsj call s:gen_equals()
 command! -buffer CompileOnSaveToggle call ToggleSettingCompileOnSave()
-command! -buffer CacheCurrProjMaven call CacheThisMavenProj()
-command! -buffer CreateIndex call CacheThisMavenProj() | call s:list_classes_cache()
+command! -buffer CacheCurrProjMaven call s:cacheThisMavenProj()
+command! -buffer CreateIndex call s:cacheThisMavenProj() | call s:list_classes_cache()
 command! -buffer IndexCache call s:list_classes_cache()
 command! -bar -buffer Javac call JavacBuffer()
 command! -bar -buffer Junit call JUnitCurrent()
