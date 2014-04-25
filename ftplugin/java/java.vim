@@ -824,6 +824,7 @@ fun! s:prepare_completion() "{{{
     au InsertLeave *.java set cfu=
     au InsertLeave *.java silent! iunmap <buffer> <cr>
     au InsertLeave *.java silent! iunmap <buffer> <tab>
+    au InsertLeave *.java silent! iunmap <buffer> <C-y>
     au InsertLeave *.java call s:clear_autocmds_java_complete()
   augroup END
 
@@ -1321,6 +1322,52 @@ fun! s:prompt_while_invalid(promptstr) "{{{
   return l:response
 endfunction "}}}
 
+fun! s:serial_ver() "{{{
+  let l:line_serial_ver=search('\v^\s+(private )?static final long serialVersionUID.*', 'n')
+  if l:line_serial_ver != 0
+    echohl warningmsg | echo 'already has serialVersionUID' | echohl none
+    return
+  endif
+  let serial_ver=s:find_serial_ver()
+  if serial_ver !~ '\v\s+private static'
+    echohl warningmsg | echo 'Class not serializable' | echohl none
+    return
+  endif
+  call s:append_serial_ver(serial_ver)
+endfunction "}}}
+
+fun! s:append_serial_ver(serialver) "{{{
+  let l:lines = ['', a:serialver, '']
+  let l:public_class_line = search('\v^public class \S+.*', 'n')
+  call append(l:public_class_line, l:lines)
+endfunction "}}}
+
+fun! s:find_serial_ver() "{{{
+  let l:fqcn=s:search_package() . '.' . expand('%:t:r')
+  let l:indent=&et? '    ' : "\t"
+  let l:pom_xml=findfile('pom.xml', expand('%:p:h').';')
+  let l:base_dir=fnamemodify(l:pom_xml, ':h')
+  let l:cmd='serialver -classpath ' . l:base_dir .
+        \ '/target/classes;' . l:base_dir .
+        \ '/target/test-classes;. ' . l:fqcn
+  echom l:cmd
+  let l:serial_ver=l:indent . 'private ' . matchstr(system(l:cmd), '\v^[^:]+:\s+\zs.+')
+  let l:serial_ver=substitute(l:serial_ver, "\n", '', '')
+  return l:serial_ver
+endfunction "}}}
+
+
+fun! s:search_package() "{{{
+  for line_nr in range(line('$'))
+    let l:line = getline(line_nr)
+    if  l:line =~ '\v^package.*'
+      return matchstr(l:line, '\vpackage \zs.+\ze;')
+    endif
+  endfor
+  return ''
+endfunction "}}}
+
+
 fun! VimJMessSID() "{{{
   return s:sid
 endfunction "}}}
@@ -1342,6 +1389,7 @@ command! -bar -buffer Javac call JavacBuffer()
 command! -bar -buffer Junit call JUnitCurrent()
 command! -bar -buffer Javap call Javapcword()
 command! -buffer A call s:Alternate()
+command! SerialVer call s:serial_ver()
 
 nnoremap <silent><buffer> gG :GetSet<cr>
 nnoremap <silent><buffer> gS :ToString<cr>
