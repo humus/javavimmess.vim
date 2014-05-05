@@ -26,29 +26,29 @@ fun! s:cacheThisMavenProj() abort "{{{
   if l:adir !~ '\v/$' | let l:adir .= '/' | endif
   let l:cmd_height = &cmdheight
   set cmdheight=3
-  let l:is_regenerated = s:prompt_regenerate_cache(adir)
+  let l:is_regenerated = s:prompt_regenerate_cache(l:adir)
   exe "set cmdheight=" . l:cmd_height
   if l:is_regenerated
-    call s:populate_cache(adir)
+    call s:populate_cache(l:adir)
   endif
 endfunction "}}}
 
 fun! s:prompt_regenerate_cache(adir) "{{{
-  let adir = a:adir . '.cache'
-  let regenerated=1
-  if isdirectory(adir)
+  let l:adir = a:adir . '.cache'
+  let l:regenerated=1
+  if isdirectory(l:adir)
     echo 'Do you want to regenerate cache?'
     echo '================================'
     echo 'y/n '
-    let response = nr2char(getchar())
-    if response =~? 'y'
-      call s:delete_dir(adir)
+    let l:response = nr2char(getchar())
+    if l:response =~? 'y'
+      call s:delete_dir(l:adir)
     else
       redraw | echo "Cache preserved"
-      let regenerated = 0
+      let l:regenerated = 0
     endif
   endif
-  return regenerated
+  return l:regenerated
 endfunction "}}}
 
 fun! s:delete_dir(a_dir) "{{{
@@ -66,18 +66,59 @@ fun! s:populate_cache(a_dir) abort "{{{
   exe "cd " . a:a_dir
   try
     let l:paths = s:parse_mvn_output()
-    call s:copy_files_to_cache(paths)
+    call s:save_snapshots_ref(l:paths)
+    call s:copy_files_to_cache(l:paths)
   finally
     exe "cd " . l:cwd_
   endtry
 endfunction "}}}
 
 fun! s:parse_mvn_output() "{{{
-  let mvn_output = system('mvn dependency:build-classpath')
-  let lines = split(mvn_output, '\n')
-  let line = filter(lines, 'v:val =~ ''\vjar[;:]'' && v:val !~ ''\vWARNING''')[0]
-  let paths = split(line, '\v(^C|;C)@<![:;]')
-  return paths
+  let l:mvn_output = system('mvn dependency:build-classpath')
+  let l:lines = split(l:mvn_output, '\n')
+  let l:line = filter(l:lines, 'v:val =~ ''\vjar[;:]'' && v:val !~ ''\vWARNING''')[0]
+  let l:paths = split(l:line, '\v(^C|;C)@<![:;]')
+  return l:paths
+endfunction "}}}
+
+fun! s:save_snapshots_ref(paths) "{{{
+  let l:paths=map(copy(a:paths), 'fnamemodify(v:val, '':t'') . ''	 '' . v:val')
+  call filter(l:paths, 'v:val =~ ''\vSNAPSHOT''')
+  call writefile(l:paths, '.cache/jarfile_and_paths.txt')
+endfunction "}}}
+
+fun! s:update_jar_snapshots() "{{{
+  let l:dirs = s:calculate_dirs()
+  exe "lcd " . l:dirs.project_dir
+  let l:file_refs='.cache/jarfile_and_paths.txt'
+  try
+    if filereadable(l:file_refs)
+      let l:lines = readfile(l:file_refs)
+      let l:counter=0
+      for l in l:lines
+        let l:cache_file = '.cache/' . matchstr(l, '\v^[^	]+\ze	')
+        let l:repo_file = matchstr(l, '\v^[^	]+\s+\zs\S.+')
+        if getftime(l:cache_file) < getftime(l:repo_file)
+          call delete(l:cache_file)
+          call s:copy_file(l:repo_file, l:cache_file)
+          let l:counter+=1
+        endif
+      endfor
+      if l:counter
+        echo 'updated: ' . l:counter . ' jars'
+      endif
+    endif
+  finally
+    exe 'lcd ' . dirs.cwd_dir
+  endtry
+endfunction "}}}
+
+fun! s:copy_file(source, dest) "{{{
+  if has('win32')
+    call system('copy ' . substitute(a:source, '\v/', '\\', 'g') . ' ' . substitute(a:dest, '\v/', '\\', 'g'))
+  else
+    call system('cp ' . a:source . ' ' . a:dest)
+  endif
 endfunction "}}}
 
 fun! s:copy_files_to_cache(files) "{{{
@@ -1349,7 +1390,9 @@ fun! s:find_serial_ver() "{{{
   let l:base_dir=fnamemodify(l:pom_xml, ':h')
   let l:cmd='serialver -classpath ' . l:base_dir .
         \ '/target/classes;' . l:base_dir .
-        \ '/target/test-classes;. ' . l:fqcn
+        \ '/target/test-classes;' . l:base_dir .
+        \ '/.cache/*;' . l:base_dir . ' '
+        \ . l:fqcn
   echom l:cmd
   let l:serial_ver=l:indent . 'private ' . matchstr(system(l:cmd), '\v^[^:]+:\s+\zs.+')
   let l:serial_ver=substitute(l:serial_ver, "\n", '', '')
@@ -1367,38 +1410,124 @@ fun! s:search_package() "{{{
   return ''
 endfunction "}}}
 
+fun! s:create_fluent_builder() "{{{
+  let l:indent = &et ? '    ' : '	'
+  let dirs = s:calculate_dirs()
+  exe 'lcd ' . dirs.project_dir
+  let l:props = s:get_property_lines()
+  call map(l:props, '<SID>clean_property(v:val)')
+  let l:class_name = expand('%:t:r') . 'Builder'
+  if filereadable(expand('%:p:h').'/'.l:class_name)
+    echohl warningmsg | echo l:class_name . '  already exists' | echohl none
+    return
+  endif
+  let l:imports = s:find_imports(l:props)
+
+  let l:cur_package = matchstr(s:current_clazz(), '\v^.+\ze\.\w+$')
+
+  let l:lines = ['package ' . l:cur_package . ';', '']
+  let l:lines += l:imports
+  let l:lines += ['', 'public class ' . l:class_name . ' {', '']
+  let l:lines += map(copy(l:props), 'l:indent . ''private '' . v:val . '';''')
+  call add(l:lines, '')
+  let l:lines += s:define_with_methods(l:props, l:class_name, l:indent)
+  let l:lines += s:define_build_method(l:props, l:indent)
+  call add(l:lines, '}')
+  let l:set = '/'
+  if has('win32')
+    let l:sep = '\'
+  endif
+
+  let l:f=expand('%:p:h').l:sep.l:class_name.'.java'
+  call writefile(l:lines, l:f)
+  exe "lcd " . dirs.cwd_dir
+  exe "e " . l:f
+endfunction "}}}
+
+fun! s:define_with_methods(props, class, indent) "{{{
+  let l:lines = []
+  for l:prop in a:props
+    let l:lines +=
+          \ split(substitute(l:prop, '\v^(.+) (\w+)$',
+          \ a:indent . 'public ' . a:class . ' with\u\2(\1 \2) {@' .
+          \ repeat(a:indent, 2) . 'this.\2 = \2;@' .
+          \ a:indent . '}@@', ''), '\v\@')
+  endfor
+  return l:lines
+endfunction "}}}
+
+fun! s:define_build_method(props, indent) "{{{
+  let l:type = expand('%:t:r')
+  let l:var = substitute(l:type, '^.', '\l&', '')
+  let l:lines = []
+  call add(l:lines, a:indent . 'public ' . l:type . ' build() {')
+  call add(l:lines, repeat(a:indent, 2) . l:type . ' ' .
+        \ l:var . ' = new ' . l:type . '();')
+  for l:prop in a:props
+    call add(l:lines,
+      \ substitute(l:prop, '\v^(.+) (\w+)$',
+      \ repeat(a:indent, 2) . l:var . '.set\u\2(\2);', ''))
+  endfor
+  call add(l:lines, repeat(a:indent, 2) . 'return ' . l:var . ';')
+  call add(l:lines, a:indent . '}')
+  return l:lines
+endfunction "}}}
+
+fun! s:find_imports(props) "{{{
+  let l:types=map(copy(a:props), 'matchstr(v:val, ''\v^\w+\ze'')')
+  let l:imports=[]
+  let l:imported=[]
+  for l:type in l:types
+    if index(l:imported, l:type) > 0
+      continue
+    endif
+    let l:line_import = searchpos('\v^import .+\.<' . l:type . '>;', 'bn')[0]
+    if l:line_import > 1
+      let l:import=getline(l:line_import)
+      call add(l:imported, l:type)
+      call add(l:imports, l:import)
+    endif
+  endfor
+  return l:imports
+endfunction "}}}
 
 fun! VimJMessSID() "{{{
   return s:sid
 endfunction "}}}
 
-inoremap <expr> <C-g><C-e> <SID>autowrite_type_var()
-inoremap <expr> <C-g>e     <SID>autowrite_type_var()
-inoremap <expr> <C-g>E     <SID>autowrite_new_from_var()
-nnoremap g5 :call CreateDescribeWindow()<CR>
+fun! s:setup_javavimmess() "{{{
+  inoremap <expr> <C-g><C-e> <SID>autowrite_type_var()
+  inoremap <expr> <C-g>e     <SID>autowrite_type_var()
+  inoremap <expr> <C-g>E     <SID>autowrite_new_from_var()
+  nnoremap g5 :call CreateDescribeWindow()<CR>
 
-command! -buffer GetSet call s:getters_setters()
-command! -buffer ToString call s:gen_tostring()
-command! -buffer HashCode call s:gen_hashcode()
-command! -buffer Equalsj call s:gen_equals()
-command! -buffer CompileOnSaveToggle call ToggleSettingCompileOnSave()
-command! -buffer CacheCurrProjMaven call s:cacheThisMavenProj()
-command! -buffer CreateIndex call s:cacheThisMavenProj() | call s:list_classes_cache()
-command! -buffer IndexCache call s:list_classes_cache()
-command! -bar -buffer Javac call JavacBuffer()
-command! -bar -buffer Junit call JUnitCurrent()
-command! -bar -buffer Javap call Javapcword()
-command! -buffer A call s:Alternate()
-command! SerialVer call s:serial_ver()
+  command! -buffer GetSet call s:getters_setters()
+  command! -buffer ToString call s:gen_tostring()
+  command! -buffer HashCode call s:gen_hashcode()
+  command! -buffer Equalsj call s:gen_equals()
+  command! -buffer CompileOnSaveToggle call ToggleSettingCompileOnSave()
+  command! -buffer CacheCurrProjMaven call s:cacheThisMavenProj()
+  command! -buffer CreateIndex call s:cacheThisMavenProj() | call s:list_classes_cache()
+  command! -buffer IndexCache call s:list_classes_cache()
+  command! -bar -buffer Javac call JavacBuffer()
+  command! -bar -buffer Junit call JUnitCurrent()
+  command! -bar -buffer Javap call Javapcword()
+  command! -buffer A call s:Alternate()
+  command! SerialVer call s:serial_ver()
+  command! Updatesnapshots call s:update_jar_snapshots()
+  command! Upsnapshots call s:update_jar_snapshots()
+  command! FluentBuilder call s:create_fluent_builder()
 
-nnoremap <silent><buffer> gG :GetSet<cr>
-nnoremap <silent><buffer> gS :ToString<cr>
-nnoremap <silent><buffer> gH :HashCode<cr>
-nnoremap <silent><buffer> gQ :Equalsj<cr>
-nnoremap <silent><buffer> g7 :call <SID>javap_current()<cr>
-inoremap <silent><buffer> <C-g><C-i> <Esc>:call CreateAutoImportWindow(1)<cr>
-inoremap <silent><buffer> <C-g>i <Esc>:call CreateAutoImportWindow(1)<cr>
-nnoremap <silent><buffer> <C-g><C-i> :call CreateAutoImportWindow(0)<cr>
-nnoremap <silent><buffer> <C-g>p :call CreateAutoImportWindow(0)<cr>
-inoremap <silent><buffer> <expr> <C-g><C-n> <SID>prepare_completion()
+  nnoremap <silent><buffer> gG :GetSet<cr>
+  nnoremap <silent><buffer> gS :ToString<cr>
+  nnoremap <silent><buffer> gH :HashCode<cr>
+  nnoremap <silent><buffer> gQ :Equalsj<cr>
+  nnoremap <silent><buffer> g7 :call <SID>javap_current()<cr>
+  inoremap <silent><buffer> <C-g><C-i> <Esc>:call CreateAutoImportWindow(1)<cr>
+  inoremap <silent><buffer> <C-g>i <Esc>:call CreateAutoImportWindow(1)<cr>
+  nnoremap <silent><buffer> <C-g><C-i> :call CreateAutoImportWindow(0)<cr>
+  nnoremap <silent><buffer> <C-g>p :call CreateAutoImportWindow(0)<cr>
+  inoremap <silent><buffer> <expr> <C-g><C-n> <SID>prepare_completion()
+endfunction "}}}
 
+call s:setup_javavimmess()
