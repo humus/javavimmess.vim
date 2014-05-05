@@ -1041,6 +1041,26 @@ fun! s:getters_setters() "{{{
   endtry
 endfunction "}}}
 
+fun! s:extract_types_from_props(props) "{{{
+  let l:type_defs=map(copy(a:props), 'substitute(v:val, ''\s+\S+$'', '''', '''')')
+  let l:types=[]
+  let l:type_expr='\v(\$+\w+|\w+|\w+\$+|\$+\w+\$+\w*)+'
+  let l:count=0
+  for l:type_def in l:type_defs
+    let l:tmp = l:type_def
+    while match(l:tmp, l:type_expr) >= 0
+      let l:type = matchstr(l:tmp, l:type_expr)
+      call add(l:types, l:type)
+      let l:tmp=substitute(l:tmp, l:type_expr, '', '')
+      let l:count+=1
+      if l:count > 1000
+        throw 'SUPERERROR'
+      endif
+    endwhile
+  endfor
+  return l:types
+endfunction "}}}
+
 fun! s:get_property_lines() "{{{
   let l:props = []
   for line in range(1, line('$'))
@@ -1123,6 +1143,7 @@ endfunction "}}}
 fun! s:clean_property(prop) "{{{
   let l:prop = substitute(a:prop, '\v^\s+(private|protected) ', '', '')
   let l:prop = substitute(l:prop, '\v;\s*$', '', '')
+  let l:prop = substitute(l:prop, '\v\s*\=.*$', '', '')
   return l:prop
 endfunction "}}}
 
@@ -1421,7 +1442,7 @@ fun! s:create_fluent_builder() "{{{
     echohl warningmsg | echo l:class_name . '  already exists' | echohl none
     return
   endif
-  let l:imports = s:find_imports(l:props)
+  let l:imports = s:find_imports(s:extract_types_from_props(l:props))
 
   let l:cur_package = matchstr(s:current_clazz(), '\v^.+\ze\.\w+$')
 
@@ -1451,6 +1472,7 @@ fun! s:define_with_methods(props, class, indent) "{{{
           \ split(substitute(l:prop, '\v^(.+) (\w+)$',
           \ a:indent . 'public ' . a:class . ' with\u\2(\1 \2) {@' .
           \ repeat(a:indent, 2) . 'this.\2 = \2;@' .
+          \ repeat(a:indent, 2) . 'return this;@' .
           \ a:indent . '}@@', ''), '\v\@')
   endfor
   return l:lines

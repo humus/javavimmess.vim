@@ -7,6 +7,8 @@ Before:
   let AutoWriteTypeVar=function('<SNR>'.jsid.'autowrite_type_var')
   let AutoWriteNewFromVar=function('<SNR>'.jsid.'autowrite_new_from_var')
   let GetPropertiesLineNumbers=function('<SNR>'.jsid.'get_property_line_numbers')
+  let ExtractTypes=function('<SNR>'.jsid.'extract_types_from_props')
+  let CleanProperty=function('<SNR>'.jsid.'clean_property')
 Given:
 Execute:
   call setline(1, ApplyFun('abstract void error(String, Throwable)'))
@@ -73,3 +75,19 @@ Expect:
   }
   2
   3
+Given:
+Execute:
+  call append(0, ExtractTypes(['List<BigDecimal>', 'Map<String, Date>']))
+  normal Gdd
+Expect:
+  List
+  BigDecimal
+  Map
+  String
+  Date
+Given:
+Execute:
+  call append(0, CleanProperty('    private List<String> a = new ArrayList<String>();'))
+  normal Gdd
+Expect:
+  List<String> a
