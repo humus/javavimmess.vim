@@ -104,6 +104,7 @@ fun! s:update_jar_snapshots() "{{{
           let l:counter+=1
         endif
       endfor
+      unlet l:lines
       if l:counter
         echo 'updated: ' . l:counter . ' jars'
       endif
@@ -237,14 +238,14 @@ fun! s:str_jartf_call(file_name, grep_expr) "{{{
 endfunction "}}}
 
 fun! s:sort_file_index() "{{{
-  let lines = []
+  let l:lines = []
   if filereadable('classes.index')
-    let lines = readfile('classes.index')
-    call filter(lines, 'v:val =~ ''\v^[^$]+$'' && v:val !~ ''package-info''')
-    call map(lines, 's:reformat_index_line(v:val)')
-    call sort(lines)
-    call writefile(lines, 'classes.index')
+    let l:lines = readfile('classes.index')
+    call filter(l:lines, 'v:val =~ ''\v^[^$]+$'' && v:val !~ ''package-info''')
+    call map(sort(l:lines), 's:reformat_index_line(v:val)')
+    call writefile(l:lines, 'classes.index')
   endif
+  unlet l:lines
 endfunction "}}}
 
 fun! s:reformat_index_line(index_line) "{{{
@@ -418,7 +419,7 @@ fun! FindDeclaredType(variable) abort "{{{
         \ , ''
         \ , '\v^%(\t|    )}'
         \ , 'bn')
-  let l:search_expr = '\v^\s+(final\s|for\s*\(\s*)?\S+.*(\=|:)@<!\s?' . a:variable . '\s*[[:punct:];=].*$'
+  let l:search_expr = '\v^\s+(final\s|for\s*\(\s*)?\S+.*("\=|:)@<!\s?' . a:variable . '\s*(\=|[;:]|\n)@='
   let l:def_line = search(l:search_expr, 'cbnW', l:stopline)
   let l:def_str = substitute(getline(l:def_line), '\v<for>\s*\(', '', '')
   let l:type= substitute(
@@ -527,9 +528,7 @@ fun! s:source_of_clazz_exists(clazz_type) "{{{
 endfunction "}}}
 
 fun! FindImport(clazz) "{{{
-  let a_class = a:clazz
-  let l:expression = '\v^import .+<' . a_class . ';'
-
+  let l:expression = '\v^import .+<' . a:clazz . ';'
   let _pos = searchpos(l:expression, 'bn')[0]
   return _pos
 endfunction "}}}
@@ -893,8 +892,7 @@ fun! s:prepare_completion() "{{{
     else
       let l:var_type = var_name
     endif
-    let full_class_name = FindClassType(var_type)
-
+    let full_class_name = FindClassType(l:var_type)
     let l:lines = s:exec_javap(full_class_name, 0)
     let l:lines = s:format_javap_output(l:lines)
     let l:lines = s:prefilter_static(var_name, l:lines)
@@ -1356,7 +1354,7 @@ fun! s:prompt_for_generated_method(lines, prompt) "{{{
       let l:response = s:prompt_while_invalid(a:prompt)
     endif
     call matchdelete(l:highlighted)
-    if or(l:response == 'y', l:response == 'a')
+    if l:response == 'y' || l:response == 'a'
       call add(l:responses, prop)
     endif
     if l:response == 'q'
